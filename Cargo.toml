@@ -1,0 +1,18 @@
+[package]
+name = "mapto3d"
+version = "0.1.0"
+edition = "2024"
+description = "Generate 3D-printable STL city maps from OpenStreetMap data"
+license = "MIT"
+repository = "https://github.com/shantanugoel/mapto3d"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+geo = "0.29"
+stl_io = "0.10"
+anyhow = "1"
+thiserror = "2"
+indicatif = "0.17"
