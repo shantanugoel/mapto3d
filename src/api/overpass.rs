@@ -3,7 +3,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
-const OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
+// const OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
+const OVERPASS_URL: &str = "https://overpass.private.coffee/api/interpreter";
 const USER_AGENT: &str = "mapto3d/0.1.0 (https://github.com/shantanugoel/mapto3d)";
 
 /// Raw Overpass API response

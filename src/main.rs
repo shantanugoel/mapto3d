@@ -18,7 +18,7 @@ use layers::{
     RoadConfig, TextRenderer, generate_base_plate, generate_park_meshes, generate_road_meshes,
     generate_water_meshes,
 };
-use mesh::{stl::estimate_stl_size, write_stl};
+use mesh::{stl::estimate_stl_size, validate_and_fix, write_stl};
 use osm::{parse_parks, parse_roads, parse_water};
 
 /// Generate 3D-printable STL city maps from OpenStreetMap data
@@ -254,7 +254,9 @@ fn main() -> Result<()> {
     }
     all_triangles.extend(park_triangles);
 
-    let road_config = RoadConfig::default().with_scale(args.road_scale);
+    let road_config = RoadConfig::default()
+        .with_scale(args.road_scale)
+        .with_map_radius(args.radius, args.size);
     let road_triangles = generate_road_meshes(&roads, &projector, &scaler, &road_config);
     if args.verbose {
         println!("  Roads: {} triangles", road_triangles.len());
@@ -278,6 +280,27 @@ fn main() -> Result<()> {
         all_triangles.len(),
         start.elapsed().as_secs_f32()
     ));
+
+    let spinner = create_spinner("Validating and cleaning mesh...");
+    let start = Instant::now();
+    let original_count = all_triangles.len();
+    let (all_triangles, validation_report) = validate_and_fix(all_triangles);
+    let removed = original_count - all_triangles.len();
+    if removed > 0 || args.verbose {
+        spinner.finish_with_message(format!(
+            "Validated: {} triangles, {} degenerate removed, {} normals fixed [{:.1}s]",
+            all_triangles.len(),
+            removed,
+            validation_report.invalid_normal,
+            start.elapsed().as_secs_f32()
+        ));
+    } else {
+        spinner.finish_with_message(format!(
+            "Mesh valid: {} triangles [{:.1}s]",
+            all_triangles.len(),
+            start.elapsed().as_secs_f32()
+        ));
+    }
 
     let spinner = create_spinner("Writing STL file...");
     let start = Instant::now();

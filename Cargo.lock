@@ -910,6 +910,7 @@ dependencies = [
  "serde",
  "serde_json",
  "stl_io",
+ "tempfile",
  "thiserror",
 ]
 

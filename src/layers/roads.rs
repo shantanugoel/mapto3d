@@ -1,18 +1,18 @@
 use crate::domain::{RoadClass, RoadSegment};
-use crate::geometry::{Projector, Scaler};
+use crate::geometry::{Projector, Scaler, simplify_polyline};
 use crate::mesh::{Triangle, extrude_ribbon};
 
-/// Configuration for road mesh generation
 #[derive(Debug, Clone)]
 pub struct RoadConfig {
-    /// (width_mm, height_mm) for each road class
     pub motorway: (f32, f32),
     pub primary: (f32, f32),
     pub secondary: (f32, f32),
     pub tertiary: (f32, f32),
     pub residential: (f32, f32),
-    /// Road scale multiplier from CLI
     pub road_scale: f32,
+    pub map_scale_factor: f32,
+    pub min_width_mm: f32,
+    pub min_height_mm: f32,
 }
 
 impl Default for RoadConfig {
@@ -24,27 +24,63 @@ impl Default for RoadConfig {
             tertiary: (1.5, 0.7),
             residential: (0.8, 0.5),
             road_scale: 1.0,
+            map_scale_factor: 1.0,
+            min_width_mm: 0.6,
+            min_height_mm: 0.4,
         }
     }
 }
 
 impl RoadConfig {
-    /// Get width and height for a road class
     pub fn get_dimensions(&self, class: RoadClass) -> (f32, f32) {
-        let (w, h) = match class {
+        let (base_w, base_h) = match class {
             RoadClass::Motorway => self.motorway,
             RoadClass::Primary => self.primary,
             RoadClass::Secondary => self.secondary,
             RoadClass::Tertiary => self.tertiary,
             RoadClass::Residential => self.residential,
         };
-        (w, h * self.road_scale)
+
+        let scaled_w = (base_w * self.map_scale_factor).max(self.min_width_mm);
+        let scaled_h = (base_h * self.road_scale * self.map_scale_factor).max(self.min_height_mm);
+
+        (scaled_w, scaled_h)
     }
 
-    /// Create a config with a road scale multiplier
     pub fn with_scale(mut self, scale: f32) -> Self {
         self.road_scale = scale;
         self
+    }
+
+    pub fn with_map_radius(mut self, radius_m: u32, physical_size_mm: f32) -> Self {
+        let radius_km = radius_m as f32 / 1000.0;
+
+        self.map_scale_factor = if radius_km < 5.0 {
+            1.0
+        } else if radius_km < 10.0 {
+            1.0 + (radius_km - 5.0) * 0.1
+        } else if radius_km < 20.0 {
+            1.5 + (radius_km - 10.0) * 0.05
+        } else {
+            2.0
+        };
+
+        let mm_per_km = physical_size_mm / (radius_km * 2.0);
+        if mm_per_km < 5.0 {
+            self.map_scale_factor *= 1.5;
+        }
+
+        self
+    }
+
+    pub fn simplification_epsilon(&self, class: RoadClass) -> f64 {
+        match class {
+            RoadClass::Motorway => 15.0,
+            RoadClass::Primary => 12.0,
+            RoadClass::Secondary => 10.0,
+            RoadClass::Tertiary => 8.0,
+            RoadClass::Residential => 5.0,
+        }
     }
 }
 
@@ -67,24 +103,24 @@ pub fn generate_road_meshes(
     let mut all_triangles = Vec::new();
 
     for road in roads {
-        // Project lat/lon to meters
-        let projected: Vec<(f64, f64)> = road
-            .points
+        let epsilon = config.simplification_epsilon(road.class);
+        let simplified_points = simplify_polyline(&road.points, epsilon);
+
+        if simplified_points.len() < 2 {
+            continue;
+        }
+
+        let projected: Vec<(f64, f64)> = simplified_points
             .iter()
             .map(|&(lat, lon)| projector.project(lat, lon))
             .collect();
 
-        // Scale to mm
         let scaled: Vec<(f32, f32)> = projected.iter().map(|&(x, y)| scaler.scale(x, y)).collect();
 
-        // Get dimensions for this road class
         let (width, height) = config.get_dimensions(road.class);
 
-        // Base Z level (layer 0 = ground level)
-        // Bridges go higher, tunnels go lower
         let base_z = road.layer as f32 * 0.5;
 
-        // Generate ribbon mesh
         let triangles = extrude_ribbon(&scaled, width, height, base_z);
         all_triangles.extend(triangles);
     }
@@ -108,6 +144,26 @@ mod tests {
     fn test_road_config_scale() {
         let config = RoadConfig::default().with_scale(1.5);
         let (_, h) = config.get_dimensions(RoadClass::Motorway);
-        assert_eq!(h, 3.0); // 2.0 * 1.5
+        assert_eq!(h, 3.0);
+    }
+
+    #[test]
+    fn test_road_config_map_radius_small() {
+        let config = RoadConfig::default().with_map_radius(3000, 220.0);
+        assert!((config.map_scale_factor - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_road_config_map_radius_large() {
+        let config = RoadConfig::default().with_map_radius(15000, 220.0);
+        assert!(config.map_scale_factor > 1.5);
+    }
+
+    #[test]
+    fn test_road_config_min_width() {
+        let config = RoadConfig::default();
+        let (w, h) = config.get_dimensions(RoadClass::Residential);
+        assert!(w >= 0.6);
+        assert!(h >= 0.4);
     }
 }
