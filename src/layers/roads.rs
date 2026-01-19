@@ -13,6 +13,7 @@ pub struct RoadConfig {
     pub map_scale_factor: f32,
     pub min_width_mm: f32,
     pub min_height_mm: f32,
+    pub simplify_level: u8,
 }
 
 impl Default for RoadConfig {
@@ -27,6 +28,7 @@ impl Default for RoadConfig {
             map_scale_factor: 1.0,
             min_width_mm: 0.6,
             min_height_mm: 0.4,
+            simplify_level: 0,
         }
     }
 }
@@ -73,14 +75,32 @@ impl RoadConfig {
         self
     }
 
-    pub fn simplification_epsilon(&self, class: RoadClass) -> f64 {
-        match class {
-            RoadClass::Motorway => 15.0,
-            RoadClass::Primary => 12.0,
-            RoadClass::Secondary => 10.0,
-            RoadClass::Tertiary => 8.0,
-            RoadClass::Residential => 5.0,
+    pub fn with_simplify_level(mut self, level: u8) -> Self {
+        self.simplify_level = level.min(3);
+        self
+    }
+
+    fn simplification_epsilon(&self, class: RoadClass) -> Option<f64> {
+        if self.simplify_level == 0 {
+            return None;
         }
+
+        let base_epsilon = match class {
+            RoadClass::Motorway => 0.00015,
+            RoadClass::Primary => 0.00012,
+            RoadClass::Secondary => 0.00010,
+            RoadClass::Tertiary => 0.00008,
+            RoadClass::Residential => 0.00005,
+        };
+
+        let multiplier = match self.simplify_level {
+            1 => 1.0,
+            2 => 2.0,
+            3 => 4.0,
+            _ => 1.0,
+        };
+
+        Some(base_epsilon * multiplier)
     }
 }
 
@@ -103,14 +123,20 @@ pub fn generate_road_meshes(
     let mut all_triangles = Vec::new();
 
     for road in roads {
-        let epsilon = config.simplification_epsilon(road.class);
-        let simplified_points = simplify_polyline(&road.points, epsilon);
+        let points_to_use = if let Some(epsilon) = config.simplification_epsilon(road.class) {
+            let simplified = simplify_polyline(&road.points, epsilon);
+            if simplified.len() < 2 {
+                continue;
+            }
+            simplified
+        } else {
+            if road.points.len() < 2 {
+                continue;
+            }
+            road.points.clone()
+        };
 
-        if simplified_points.len() < 2 {
-            continue;
-        }
-
-        let projected: Vec<(f64, f64)> = simplified_points
+        let projected: Vec<(f64, f64)> = points_to_use
             .iter()
             .map(|&(lat, lon)| projector.project(lat, lon))
             .collect();

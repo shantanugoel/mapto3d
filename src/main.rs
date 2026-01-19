@@ -90,6 +90,11 @@ struct Args {
     /// Enable verbose logging
     #[arg(short = 'v', long)]
     verbose: bool,
+
+    /// Road simplification level: 0=off (default), 1=light, 2=medium, 3=aggressive
+    /// Higher values reduce triangle count but may lose curve detail
+    #[arg(long, default_value = "0", value_parser = clap::value_parser!(u8).range(0..=3))]
+    simplify: u8,
 }
 
 fn main() -> Result<()> {
@@ -256,7 +261,8 @@ fn main() -> Result<()> {
 
     let road_config = RoadConfig::default()
         .with_scale(args.road_scale)
-        .with_map_radius(args.radius, args.size);
+        .with_map_radius(args.radius, args.size)
+        .with_simplify_level(args.simplify);
     let road_triangles = generate_road_meshes(&roads, &projector, &scaler, &road_config);
     if args.verbose {
         println!("  Roads: {} triangles", road_triangles.len());
