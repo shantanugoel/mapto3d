@@ -280,6 +280,9 @@ EXAMPLES:
 | 2.6 | Parks layer (raised mesh) | 1h |
 | 2.7 | Base plate generation | 1h |
 | 2.8 | Layer assembly & z-ordering | 2h |
+| 2.9 | By default only motorways and primary roads are queried/printed. Make it configurably for people to go deeper via CLI
+| 2.10 | City/Country name can be overridden with a primary and secondary text on the stl. 
+| 2.11 | People can directly enter a lat/long if they want. If they dont give any primary/secondary text in this case, then those are not in the stl.
 
 **Deliverable**: Complete city model with all layers
 
@@ -298,6 +301,8 @@ EXAMPLES:
 | 3.6 | Progress bar integration | 1h |
 | 3.7 | Error handling improvements | 2h |
 | 3.8 | Configuration file support (themes) | 2h |
+| 3.9 | Alterate overpass api url configuration support
+| 3.10 | Make sure that there are no floating regions in generated stl
 
 **Deliverable**: Robust, configurable tool
 
