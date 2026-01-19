@@ -12,6 +12,7 @@ use super::Triangle;
 #[derive(Debug, Default)]
 pub struct ValidationResult {
     /// Total number of triangles validated
+    #[allow(dead_code)]
     pub total: usize,
     /// Number of degenerate triangles (zero or near-zero area)
     pub degenerate: usize,
@@ -25,16 +26,19 @@ pub struct ValidationResult {
 
 impl ValidationResult {
     /// Check if the mesh passed validation without critical issues
+    #[allow(dead_code)]
     pub fn is_valid(&self) -> bool {
         self.invalid_coords == 0
     }
 
     /// Check if the mesh has any issues at all
+    #[allow(dead_code)]
     pub fn has_issues(&self) -> bool {
         self.degenerate > 0 || self.invalid_coords > 0 || self.invalid_normal > 0
     }
 
     /// Get a summary string
+    #[allow(dead_code)]
     pub fn summary(&self) -> String {
         if !self.has_issues() {
             format!("Mesh valid: {} triangles, no issues", self.total)

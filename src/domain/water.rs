@@ -12,6 +12,7 @@ impl WaterPolygon {
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_holes(outer: Vec<(f64, f64)>, holes: Vec<Vec<(f64, f64)>>) -> Self {
         Self { outer, holes }
     }

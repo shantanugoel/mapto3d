@@ -25,6 +25,7 @@ pub fn triangulate_polygon(outer: &[(f32, f32)], holes: &[Vec<(f32, f32)>]) -> V
     earcut(&vertices, &hole_indices, 2).unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub fn triangulate_polygon_f64(outer: &[(f64, f64)], holes: &[Vec<(f64, f64)>]) -> Vec<usize> {
     if outer.len() < 3 {
         return Vec::new();

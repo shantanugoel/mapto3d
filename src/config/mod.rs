@@ -100,13 +100,13 @@ impl FileConfig {
         let config_paths = get_config_paths();
 
         for path in config_paths {
-            if path.exists() {
-                if let Ok(contents) = std::fs::read_to_string(&path) {
-                    match toml::from_str(&contents) {
-                        Ok(config) => return Some(config),
-                        Err(e) => {
-                            eprintln!("Warning: Failed to parse config file {:?}: {}", path, e);
-                        }
+            if path.exists()
+                && let Ok(contents) = std::fs::read_to_string(&path)
+            {
+                match toml::from_str(&contents) {
+                    Ok(config) => return Some(config),
+                    Err(e) => {
+                        eprintln!("Warning: Failed to parse config file {:?}: {}", path, e);
                     }
                 }
             }

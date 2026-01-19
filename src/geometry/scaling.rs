@@ -35,6 +35,7 @@ impl Bounds {
     }
 
     /// Expand bounds to include another set of points
+    #[allow(dead_code)]
     pub fn expand(&mut self, points: &[(f64, f64)]) {
         for &(x, y) in points {
             self.min_x = self.min_x.min(x);
@@ -62,6 +63,7 @@ pub struct Scaler {
     offset_x: f64,
     offset_y: f64,
     /// Target size in mm
+    #[allow(dead_code)]
     target_mm: f64,
 }
 
@@ -109,16 +111,19 @@ impl Scaler {
     }
 
     /// Scale a slice of points
+    #[allow(dead_code)]
     pub fn scale_points(&self, points: &[(f64, f64)]) -> Vec<(f32, f32)> {
         points.iter().map(|&(x, y)| self.scale(x, y)).collect()
     }
 
     /// Get the scale factor (mm per meter)
+    #[allow(dead_code)]
     pub fn scale_factor(&self) -> f64 {
         self.scale
     }
 
     /// Get the target size in mm
+    #[allow(dead_code)]
     pub fn target_size(&self) -> f64 {
         self.target_mm
     }

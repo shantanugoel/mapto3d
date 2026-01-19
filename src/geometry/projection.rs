@@ -22,6 +22,7 @@ pub struct Projector {
 impl Projector {
     // WGS84 ellipsoid parameters
     const WGS84_A: f64 = 6_378_137.0; // Semi-major axis (equatorial radius) in meters
+    #[allow(dead_code)]
     const WGS84_B: f64 = 6_356_752.314_245; // Semi-minor axis (polar radius) in meters
     const WGS84_E2: f64 = 0.006_694_379_990_14; // First eccentricity squared
 
@@ -90,6 +91,7 @@ impl Projector {
     }
 
     /// Get the UTM zone number
+    #[allow(dead_code)]
     pub fn utm_zone(&self) -> u8 {
         self.utm_zone
     }
@@ -122,6 +124,7 @@ impl Projector {
     /// Get projection accuracy estimate for a given radius in meters
     ///
     /// Returns the approximate maximum error in meters at the edge of the map
+    #[allow(dead_code)]
     pub fn estimate_error(&self, radius_m: f64) -> f64 {
         // For transverse Mercator, error grows with distance from center
         // Approximate error: (distance^2) / (2 * Earth_radius)

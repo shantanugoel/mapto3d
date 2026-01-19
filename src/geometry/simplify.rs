@@ -15,6 +15,7 @@ pub fn simplify_polyline(points: &[(f64, f64)], epsilon: f64) -> Vec<(f64, f64)>
     simplified.0.into_iter().map(|c| (c.y, c.x)).collect()
 }
 
+#[allow(dead_code)]
 pub fn calculate_epsilon(radius_m: u32) -> f64 {
     let radius_km = radius_m as f64 / 1000.0;
 
@@ -31,6 +32,7 @@ pub fn calculate_epsilon(radius_m: u32) -> f64 {
     }
 }
 
+#[allow(dead_code)]
 pub fn simplify_polygon(outer: &[(f64, f64)], epsilon: f64) -> Vec<(f64, f64)> {
     if outer.len() < 5 {
         return outer.to_vec();

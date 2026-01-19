@@ -18,6 +18,7 @@ impl Triangle {
     }
 
     /// Create a triangle with a pre-calculated normal
+    #[allow(dead_code)]
     pub fn with_normal(vertices: [[f32; 3]; 3], normal: [f32; 3]) -> Self {
         Self { vertices, normal }
     }
@@ -44,11 +45,13 @@ fn calculate_normal(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> [f32; 3] {
 }
 
 /// Accumulator for building triangle meshes
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct MeshBuilder {
     triangles: Vec<Triangle>,
 }
 
+#[allow(dead_code)]
 impl MeshBuilder {
     pub fn new() -> Self {
         Self {

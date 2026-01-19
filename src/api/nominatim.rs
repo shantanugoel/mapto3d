@@ -10,6 +10,7 @@ const USER_AGENT: &str = "mapto3d/0.1.0 (https://github.com/shantanugoel/mapto3d
 struct NominatimResult {
     lat: String,
     lon: String,
+    #[allow(dead_code)]
     display_name: String,
 }
 

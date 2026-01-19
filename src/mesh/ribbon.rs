@@ -13,6 +13,7 @@ use super::Triangle;
 ///
 /// # Returns
 /// Vector of triangles forming the ribbon mesh
+#[allow(dead_code)]
 pub fn extrude_ribbon(
     points: &[(f32, f32)],
     width: f32,
