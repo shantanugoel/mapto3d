@@ -50,16 +50,16 @@ The Python maptoposter project provides the baseline for map generation:
 |----------|-------------------|-------------|
 | Base | Solid rectangular plate | 2.0 |
 | Water | Recessed area (cut into base) | -1.0 (below surface) |
-| Parks | Slight raised area | +0.3 |
+| Parks | Slight raised area | +0.4 |
 | Roads (motorway) | Extruded ribbon | +2.0, width 3.0mm |
-| Roads (primary) | Extruded ribbon | +1.5, width 2.5mm |
+| Roads (primary) | Extruded ribbon | +1.6, width 2.5mm |
 | Roads (secondary) | Extruded ribbon | +1.0, width 2.0mm |
-| Roads (tertiary) | Extruded ribbon | +0.7, width 1.5mm |
-| Roads (residential) | Extruded ribbon | +0.5, width 0.8mm |
+| Roads (tertiary) | Extruded ribbon | +0.6, width 1.5mm |
+| Roads (residential) | Extruded ribbon | +0.6, width 0.8mm |
 
 ### Physical Constraints (3D Printability)
 - **Minimum feature width**: 0.6mm (FDM printers)
-- **Minimum feature height**: 0.3mm
+- **Minimum feature height**: 0.4mm
 - **Maximum relief height**: 5mm (to avoid excessive print time)
 - **Base thickness**: 2mm minimum for structural integrity
 - **Edge bevel**: Optional 0.5mm chamfer to prevent warping
