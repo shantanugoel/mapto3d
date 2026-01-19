@@ -300,9 +300,10 @@ EXAMPLES:
 | 3.5 | Normal orientation verification | 1h |
 | 3.6 | Progress bar integration | 1h |
 | 3.7 | Error handling improvements | 2h |
-| 3.8 | Configuration file support (themes) | 2h |
+| 3.8 | Configuration file support, but can work without one | 2h |
 | 3.9 | Alterate overpass api url configuration support, also enable option to choose only the alternate or configure mirrors to try in case one fails after retries etc. By default we can add "https://overpass.private.coffee/api/interpreter" as the primary, and also add another mirror which we try to use if default fails
 | 3.10 | Recheck sane defaults for all options etc so people dont have to configure too much to just use
+| 3.11 | Slicer says that there are some floating areas in the stl. You know that the higher height layers always need something below them at each layer, right?
 
 **Deliverable**: Robust, configurable tool
 

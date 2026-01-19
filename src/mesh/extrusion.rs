@@ -7,6 +7,16 @@ pub fn extrude_polygon(
     z_bottom: f32,
     z_top: f32,
 ) -> Vec<Triangle> {
+    extrude_polygon_ex(outer, holes, z_bottom, z_top, true)
+}
+
+pub fn extrude_polygon_ex(
+    outer: &[(f32, f32)],
+    holes: &[Vec<(f32, f32)>],
+    z_bottom: f32,
+    z_top: f32,
+    include_bottom: bool,
+) -> Vec<Triangle> {
     if outer.len() < 3 {
         return Vec::new();
     }
@@ -38,11 +48,13 @@ pub fn extrude_polygon(
             [p2.0, p2.1, z_top],
         ));
 
-        triangles.push(Triangle::new(
-            [p0.0, p0.1, z_bottom],
-            [p2.0, p2.1, z_bottom],
-            [p1.0, p1.1, z_bottom],
-        ));
+        if include_bottom {
+            triangles.push(Triangle::new(
+                [p0.0, p0.1, z_bottom],
+                [p2.0, p2.1, z_bottom],
+                [p1.0, p1.1, z_bottom],
+            ));
+        }
     }
 
     add_side_walls(&mut triangles, outer, z_bottom, z_top);

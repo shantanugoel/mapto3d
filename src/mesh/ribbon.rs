@@ -19,6 +19,29 @@ pub fn extrude_ribbon(
     height: f32,
     base_z: f32,
 ) -> Vec<Triangle> {
+    extrude_ribbon_ex(points, width, height, base_z, true, true)
+}
+
+/// Extrude a 2D polyline into a 3D ribbon mesh with control over faces
+///
+/// # Arguments
+/// * `points` - 2D points in mm [(x, y), ...]
+/// * `width` - Ribbon width in mm
+/// * `height` - Ribbon height in mm
+/// * `base_z` - Base Z level in mm
+/// * `include_bottom` - If true, generate bottom faces; if false, create open-bottom shell
+/// * `include_end_caps` - If true, generate end cap faces
+///
+/// # Returns
+/// Vector of triangles forming the ribbon mesh
+pub fn extrude_ribbon_ex(
+    points: &[(f32, f32)],
+    width: f32,
+    height: f32,
+    base_z: f32,
+    include_bottom: bool,
+    include_end_caps: bool,
+) -> Vec<Triangle> {
     if points.len() < 2 {
         return Vec::new();
     }
@@ -63,7 +86,6 @@ pub fn extrude_ribbon(
         let (l0, r0) = edges[i];
         let (l1, r1) = edges[i + 1];
 
-        // Top face (CCW when viewed from above)
         let tl0 = [l0[0], l0[1], top_z];
         let tr0 = [r0[0], r0[1], top_z];
         let tl1 = [l1[0], l1[1], top_z];
@@ -72,27 +94,24 @@ pub fn extrude_ribbon(
         triangles.push(Triangle::new(tl0, tr0, tr1));
         triangles.push(Triangle::new(tl0, tr1, tl1));
 
-        // Bottom face (CW when viewed from above = CCW from below)
         let bl0 = [l0[0], l0[1], base_z];
         let br0 = [r0[0], r0[1], base_z];
         let bl1 = [l1[0], l1[1], base_z];
         let br1 = [r1[0], r1[1], base_z];
 
-        triangles.push(Triangle::new(bl0, br1, br0));
-        triangles.push(Triangle::new(bl0, bl1, br1));
+        if include_bottom {
+            triangles.push(Triangle::new(bl0, br1, br0));
+            triangles.push(Triangle::new(bl0, bl1, br1));
+        }
 
-        // Left side face
         triangles.push(Triangle::new(bl0, tl0, tl1));
         triangles.push(Triangle::new(bl0, tl1, bl1));
 
-        // Right side face
         triangles.push(Triangle::new(br0, tr1, tr0));
         triangles.push(Triangle::new(br0, br1, tr1));
     }
 
-    // End caps
-    if !edges.is_empty() {
-        // Start cap
+    if include_end_caps && !edges.is_empty() {
         let (l0, r0) = edges[0];
         let bl = [l0[0], l0[1], base_z];
         let br = [r0[0], r0[1], base_z];
@@ -101,7 +120,6 @@ pub fn extrude_ribbon(
         triangles.push(Triangle::new(bl, tl, tr));
         triangles.push(Triangle::new(bl, tr, br));
 
-        // End cap
         let (l1, r1) = edges[edges.len() - 1];
         let bl = [l1[0], l1[1], base_z];
         let br = [r1[0], r1[1], base_z];
@@ -114,14 +132,12 @@ pub fn extrude_ribbon(
     triangles
 }
 
-/// Calculate normalized direction vector between two points
 fn direction(p1: (f32, f32), p2: (f32, f32)) -> (f32, f32) {
     let dx = p2.0 - p1.0;
     let dy = p2.1 - p1.1;
     normalize((dx, dy))
 }
 
-/// Normalize a 2D vector
 fn normalize((x, y): (f32, f32)) -> (f32, f32) {
     let len = (x * x + y * y).sqrt();
     if len > 1e-10 {
@@ -139,10 +155,14 @@ mod tests {
     fn test_extrude_simple_segment() {
         let points = vec![(0.0, 0.0), (10.0, 0.0)];
         let triangles = extrude_ribbon(&points, 2.0, 1.0, 0.0);
-
-        // Should have: 8 triangles for the segment (2 top, 2 bottom, 4 sides)
-        // + 4 triangles for end caps
         assert_eq!(triangles.len(), 12);
+    }
+
+    #[test]
+    fn test_extrude_open_bottom() {
+        let points = vec![(0.0, 0.0), (10.0, 0.0)];
+        let triangles = extrude_ribbon_ex(&points, 2.0, 1.0, 0.0, false, true);
+        assert_eq!(triangles.len(), 10);
     }
 
     #[test]

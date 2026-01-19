@@ -1,6 +1,6 @@
 use crate::domain::{RoadClass, RoadSegment};
 use crate::geometry::{Projector, Scaler, simplify_polyline};
-use crate::mesh::{Triangle, extrude_ribbon};
+use crate::mesh::{Triangle, extrude_ribbon_ex};
 
 #[derive(Debug, Clone)]
 pub struct RoadConfig {
@@ -145,9 +145,25 @@ pub fn generate_road_meshes(
 
         let (width, height) = config.get_dimensions(road.class);
 
-        let base_z = road.layer as f32 * 0.5;
+        let osm_layer = road.layer;
+        let (actual_base_z, actual_height, include_bottom) = if osm_layer > 0 {
+            let elevated_z = osm_layer as f32 * 0.5;
+            (0.0, elevated_z + height, true)
+        } else if osm_layer < 0 {
+            let tunnel_depth = (-osm_layer) as f32 * 0.5;
+            (-tunnel_depth, tunnel_depth + height, true)
+        } else {
+            (0.0, height, false)
+        };
 
-        let triangles = extrude_ribbon(&scaled, width, height, base_z);
+        let triangles = extrude_ribbon_ex(
+            &scaled,
+            width,
+            actual_height,
+            actual_base_z,
+            include_bottom,
+            true,
+        );
         all_triangles.extend(triangles);
     }
 

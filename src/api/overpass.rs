@@ -3,17 +3,15 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
-// const OVERPASS_URL: &str = "https://overpass-api.de/api/interpreter";
-const OVERPASS_URL: &str = "https://overpass.private.coffee/api/interpreter";
+use crate::config::OverpassConfig;
+
 const USER_AGENT: &str = "mapto3d/0.1.0 (https://github.com/shantanugoel/mapto3d)";
 
-/// Raw Overpass API response
 #[derive(Debug, Deserialize)]
 pub struct OverpassResponse {
     pub elements: Vec<Element>,
 }
 
-/// A single element from Overpass (node or way)
 #[derive(Debug, Deserialize)]
 pub struct Element {
     #[serde(rename = "type")]
@@ -29,14 +27,10 @@ pub struct Element {
     pub lon: Option<f64>,
 }
 
-/// Calculate bounding box from center point and radius
 fn calculate_bbox(center: (f64, f64), radius_m: u32) -> (f64, f64, f64, f64) {
     let (lat, lon) = center;
     let radius_km = radius_m as f64 / 1000.0;
 
-    // Approximate degrees per km
-    // 1 degree latitude ≈ 111 km
-    // 1 degree longitude ≈ 111 km * cos(lat)
     let lat_delta = radius_km / 111.0;
     let lon_delta = radius_km / (111.0 * lat.to_radians().cos());
 
@@ -48,19 +42,14 @@ fn calculate_bbox(center: (f64, f64), radius_m: u32) -> (f64, f64, f64, f64) {
     (south, west, north, east)
 }
 
-/// Road depth levels for filtering which road classes to include
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RoadDepth {
-    /// Only motorways
     Motorway,
-    /// Motorways and primary roads (default)
     #[default]
     Primary,
-    /// Add secondary roads
     Secondary,
-    /// Add tertiary roads
     Tertiary,
-    /// All roads including residential
     All,
 }
 
@@ -111,7 +100,12 @@ impl RoadDepth {
 /// # Returns
 /// * `OverpassResponse` containing all highway ways and their nodes
 pub fn fetch_roads(center: (f64, f64), radius_m: u32) -> Result<OverpassResponse> {
-    fetch_roads_with_depth(center, radius_m, RoadDepth::default())
+    fetch_roads_with_depth(
+        center,
+        radius_m,
+        RoadDepth::default(),
+        &OverpassConfig::default(),
+    )
 }
 
 /// Fetch road data with configurable depth
@@ -119,6 +113,7 @@ pub fn fetch_roads_with_depth(
     center: (f64, f64),
     radius_m: u32,
     depth: RoadDepth,
+    config: &OverpassConfig,
 ) -> Result<OverpassResponse> {
     let (south, west, north, east) = calculate_bbox(center, radius_m);
 
@@ -139,13 +134,17 @@ out skel qt;"#,
         east = east
     );
 
-    execute_overpass_query(&query)
+    execute_overpass_query(&query, config)
 }
 
 /// Fetch water features from Overpass API
 ///
 /// Fetches natural=water ways and waterway=riverbank
-pub fn fetch_water(center: (f64, f64), radius_m: u32) -> Result<OverpassResponse> {
+pub fn fetch_water(
+    center: (f64, f64),
+    radius_m: u32,
+    config: &OverpassConfig,
+) -> Result<OverpassResponse> {
     let (south, west, north, east) = calculate_bbox(center, radius_m);
 
     let query = format!(
@@ -165,13 +164,17 @@ out skel qt;"#,
         east = east
     );
 
-    execute_overpass_query(&query)
+    execute_overpass_query(&query, config)
 }
 
 /// Fetch park features from Overpass API
 ///
 /// Fetches leisure=park and landuse=grass
-pub fn fetch_parks(center: (f64, f64), radius_m: u32) -> Result<OverpassResponse> {
+pub fn fetch_parks(
+    center: (f64, f64),
+    radius_m: u32,
+    config: &OverpassConfig,
+) -> Result<OverpassResponse> {
     let (south, west, north, east) = calculate_bbox(center, radius_m);
 
     let query = format!(
@@ -191,69 +194,95 @@ out skel qt;"#,
         east = east
     );
 
-    execute_overpass_query(&query)
+    execute_overpass_query(&query, config)
 }
 
-/// Execute an Overpass API query with retry logic for 504 errors
-fn execute_overpass_query(query: &str) -> Result<OverpassResponse> {
+/// Execute an Overpass API query with retry logic and URL fallback
+fn execute_overpass_query(query: &str, config: &OverpassConfig) -> Result<OverpassResponse> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(USER_AGENT)
-        .timeout(Duration::from_secs(200)) // Client timeout slightly higher than server's 180s
+        .timeout(Duration::from_secs(config.timeout_secs))
         .build()
         .context("Failed to create HTTP client")?;
 
-    // Retry logic for 504 Gateway Timeout errors (common with Overpass)
-    let max_retries = 3;
-    let mut last_error = None;
+    let urls = if config.urls.is_empty() {
+        // Fallback to defaults if somehow empty
+        vec![
+            "https://overpass.private.coffee/api/interpreter".to_string(),
+            "https://overpass-api.de/api/interpreter".to_string(),
+        ]
+    } else {
+        config.urls.clone()
+    };
 
-    for attempt in 0..max_retries {
-        if attempt > 0 {
-            // Wait before retry - Overpass recommends waiting when overloaded
-            let wait_secs = 30 * attempt as u64;
-            eprintln!(
-                "Overpass API timeout, retrying in {} seconds (attempt {}/{})",
-                wait_secs,
-                attempt + 1,
-                max_retries
-            );
-            std::thread::sleep(Duration::from_secs(wait_secs));
+    let mut all_errors: Vec<String> = Vec::new();
+
+    // Try each URL in sequence
+    for (url_idx, url) in urls.iter().enumerate() {
+        let mut last_error = None;
+
+        // Retry logic for each URL
+        for attempt in 0..config.max_retries {
+            if attempt > 0 {
+                // Wait before retry - Overpass recommends waiting when overloaded
+                let wait_secs = 30 * attempt as u64;
+                eprintln!(
+                    "Overpass API timeout on {}, retrying in {} seconds (attempt {}/{})",
+                    url,
+                    wait_secs,
+                    attempt + 1,
+                    config.max_retries
+                );
+                std::thread::sleep(Duration::from_secs(wait_secs));
+            }
+
+            // IMPORTANT: Overpass API expects form-encoded POST data, not raw body
+            // The query must be sent as: data=<query>
+            let response = match client.post(url).form(&[("data", query)]).send() {
+                Ok(resp) => resp,
+                Err(e) => {
+                    last_error = Some(format!("Request failed: {}", e));
+                    continue;
+                }
+            };
+
+            match response.status().as_u16() {
+                200 => {
+                    let result: OverpassResponse = response
+                        .json()
+                        .context("Failed to parse Overpass JSON response")?;
+                    return Ok(result);
+                }
+                429 | 504 => {
+                    // 429 = Too Many Requests, 504 = Gateway Timeout
+                    // These are retriable errors
+                    last_error = Some(format!(
+                        "Overpass API returned status {} (attempt {})",
+                        response.status(),
+                        attempt + 1
+                    ));
+                    continue;
+                }
+                status => {
+                    // Non-retriable error for this URL, try next URL
+                    last_error = Some(format!("Overpass API returned error status: {}", status));
+                    break;
+                }
+            }
         }
 
-        // IMPORTANT: Overpass API expects form-encoded POST data, not raw body
-        // The query must be sent as: data=<query>
-        let response = client
-            .post(OVERPASS_URL)
-            .form(&[("data", query)])
-            .send()
-            .context("Failed to send request to Overpass API")?;
-
-        match response.status().as_u16() {
-            200 => {
-                let result: OverpassResponse = response
-                    .json()
-                    .context("Failed to parse Overpass JSON response")?;
-                return Ok(result);
-            }
-            429 | 504 => {
-                // 429 = Too Many Requests, 504 = Gateway Timeout
-                // These are retriable errors
-                last_error = Some(format!(
-                    "Overpass API returned status {} (attempt {})",
-                    response.status(),
-                    attempt + 1
-                ));
-                continue;
-            }
-            status => {
-                bail!("Overpass API returned error status: {}", status);
+        // Record error for this URL and try next
+        if let Some(err) = last_error {
+            all_errors.push(format!("{}: {}", url, err));
+            if url_idx + 1 < urls.len() {
+                eprintln!("Overpass API {} failed, trying fallback mirror...", url);
             }
         }
     }
 
     bail!(
-        "Overpass API failed after {} retries: {}",
-        max_retries,
-        last_error.unwrap_or_else(|| "Unknown error".to_string())
+        "All Overpass API endpoints failed:\n  {}",
+        all_errors.join("\n  ")
     )
 }
 

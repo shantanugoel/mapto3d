@@ -1,4 +1,4 @@
-use crate::mesh::{Triangle, extrude_ribbon};
+use crate::mesh::{Triangle, extrude_ribbon_ex};
 
 /// Simple stroke font for 3D text rendering.
 /// Each character is defined as a series of strokes (line segments).
@@ -59,7 +59,14 @@ impl TextRenderer {
                     .collect();
 
                 if points.len() >= 2 {
-                    let ribbon = extrude_ribbon(&points, self.stroke_width, self.extrude_height, z);
+                    let ribbon = extrude_ribbon_ex(
+                        &points,
+                        self.stroke_width,
+                        self.extrude_height,
+                        z,
+                        false,
+                        true,
+                    );
                     triangles.extend(ribbon);
                 }
             }
