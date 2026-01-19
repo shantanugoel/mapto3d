@@ -296,13 +296,13 @@ EXAMPLES:
 | 3.1 | Proper UTM zone selection | 1h |
 | 3.2 | Road width scaling based on map size | 1h |
 | 3.3 | Geometry simplification (Douglas-Peucker) | 2h |
-| 3.4 | Mesh validation (manifold check) | 2h |
+| 3.4 | Mesh validation (manifold check, and also ensuring there are no floating layers or parts) | 2h |
 | 3.5 | Normal orientation verification | 1h |
 | 3.6 | Progress bar integration | 1h |
 | 3.7 | Error handling improvements | 2h |
 | 3.8 | Configuration file support (themes) | 2h |
-| 3.9 | Alterate overpass api url configuration support
-| 3.10 | Make sure that there are no floating regions in generated stl
+| 3.9 | Alterate overpass api url configuration support, also enable option to choose only the alternate or configure mirrors to try in case one fails after retries etc. By default we can add "https://overpass.private.coffee/api/interpreter" as a mirror which we try to use if default fails
+| 3.10 | Recheck sane defaults for all options etc so people dont have to configure too much to just use
 
 **Deliverable**: Robust, configurable tool
 
@@ -319,6 +319,7 @@ EXAMPLES:
 | 4.4 | Custom height profiles | 2h |
 | 4.5 | Multi-city tiling | 4h |
 | 4.6 | STL optimization (merge vertices) | 2h |
+| 4.7 | Caching
 
 ---
 

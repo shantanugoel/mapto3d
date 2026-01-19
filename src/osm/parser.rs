@@ -1,5 +1,5 @@
 use crate::api::OverpassResponse;
-use crate::domain::{RoadClass, RoadSegment};
+use crate::domain::{ParkPolygon, RoadClass, RoadSegment, WaterPolygon};
 use std::collections::HashMap;
 
 /// Parse Overpass response into domain road segments
@@ -71,6 +71,95 @@ pub fn parse_roads(response: &OverpassResponse) -> Vec<RoadSegment> {
     }
 
     roads
+}
+
+fn build_node_lookup(response: &OverpassResponse) -> HashMap<u64, (f64, f64)> {
+    response
+        .elements
+        .iter()
+        .filter(|e| e.type_ == "node")
+        .filter_map(|e| {
+            let lat = e.lat?;
+            let lon = e.lon?;
+            Some((e.id, (lat, lon)))
+        })
+        .collect()
+}
+
+fn resolve_way_to_points(node_refs: &[u64], nodes: &HashMap<u64, (f64, f64)>) -> Vec<(f64, f64)> {
+    node_refs
+        .iter()
+        .filter_map(|id| nodes.get(id).copied())
+        .collect()
+}
+
+fn is_closed_way(points: &[(f64, f64)]) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+    let first = points.first().unwrap();
+    let last = points.last().unwrap();
+    (first.0 - last.0).abs() < 1e-9 && (first.1 - last.1).abs() < 1e-9
+}
+
+pub fn parse_water(response: &OverpassResponse) -> Vec<WaterPolygon> {
+    let nodes = build_node_lookup(response);
+    let mut water_polygons = Vec::new();
+
+    for element in &response.elements {
+        if element.type_ != "way" {
+            continue;
+        }
+
+        let node_refs = match &element.nodes {
+            Some(n) => n,
+            None => continue,
+        };
+
+        let points = resolve_way_to_points(node_refs, &nodes);
+
+        if !is_closed_way(&points) {
+            continue;
+        }
+
+        if points.len() < 4 {
+            continue;
+        }
+
+        water_polygons.push(WaterPolygon::new(points));
+    }
+
+    water_polygons
+}
+
+pub fn parse_parks(response: &OverpassResponse) -> Vec<ParkPolygon> {
+    let nodes = build_node_lookup(response);
+    let mut park_polygons = Vec::new();
+
+    for element in &response.elements {
+        if element.type_ != "way" {
+            continue;
+        }
+
+        let node_refs = match &element.nodes {
+            Some(n) => n,
+            None => continue,
+        };
+
+        let points = resolve_way_to_points(node_refs, &nodes);
+
+        if !is_closed_way(&points) {
+            continue;
+        }
+
+        if points.len() < 4 {
+            continue;
+        }
+
+        park_polygons.push(ParkPolygon::new(points));
+    }
+
+    park_polygons
 }
 
 #[cfg(test)]

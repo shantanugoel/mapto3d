@@ -47,23 +47,139 @@ fn calculate_bbox(center: (f64, f64), radius_m: u32) -> (f64, f64, f64, f64) {
     (south, west, north, east)
 }
 
+/// Road depth levels for filtering which road classes to include
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum RoadDepth {
+    /// Only motorways
+    Motorway,
+    /// Motorways and primary roads (default)
+    #[default]
+    Primary,
+    /// Add secondary roads
+    Secondary,
+    /// Add tertiary roads
+    Tertiary,
+    /// All roads including residential
+    All,
+}
+
+impl std::str::FromStr for RoadDepth {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "motorway" => Ok(RoadDepth::Motorway),
+            "primary" => Ok(RoadDepth::Primary),
+            "secondary" => Ok(RoadDepth::Secondary),
+            "tertiary" => Ok(RoadDepth::Tertiary),
+            "all" => Ok(RoadDepth::All),
+            _ => Err(format!(
+                "Invalid road depth '{}'. Valid options: motorway, primary, secondary, tertiary, all",
+                s
+            )),
+        }
+    }
+}
+
+impl RoadDepth {
+    /// Get the highway types to include for this depth level
+    pub fn highway_filter(&self) -> &'static str {
+        match self {
+            RoadDepth::Motorway => r#"["highway"~"^(motorway|motorway_link)$"]"#,
+            RoadDepth::Primary => {
+                r#"["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link)$"]"#
+            }
+            RoadDepth::Secondary => {
+                r#"["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link)$"]"#
+            }
+            RoadDepth::Tertiary => {
+                r#"["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link)$"]"#
+            }
+            RoadDepth::All => r#"["highway"]"#,
+        }
+    }
+}
+
 /// Fetch road data from Overpass API
 ///
 /// # Arguments
 /// * `center` - (lat, lon) center point
 /// * `radius_m` - Radius in meters
+/// * `depth` - Which road classes to include
 ///
 /// # Returns
 /// * `OverpassResponse` containing all highway ways and their nodes
 pub fn fetch_roads(center: (f64, f64), radius_m: u32) -> Result<OverpassResponse> {
+    fetch_roads_with_depth(center, radius_m, RoadDepth::default())
+}
+
+/// Fetch road data with configurable depth
+pub fn fetch_roads_with_depth(
+    center: (f64, f64),
+    radius_m: u32,
+    depth: RoadDepth,
+) -> Result<OverpassResponse> {
     let (south, west, north, east) = calculate_bbox(center, radius_m);
 
-    // Overpass QL query for highways
+    // Overpass QL query for highways with depth filter
     // Use 180s timeout to match OSMnx's default - 60s is often too short for larger areas
     let query = format!(
         r#"[out:json][timeout:180];
 (
-  way["highway"]({south},{west},{north},{east});
+  way{filter}({south},{west},{north},{east});
+);
+out body;
+>;
+out skel qt;"#,
+        filter = depth.highway_filter(),
+        south = south,
+        west = west,
+        north = north,
+        east = east
+    );
+
+    execute_overpass_query(&query)
+}
+
+/// Fetch water features from Overpass API
+///
+/// Fetches natural=water ways and waterway=riverbank
+pub fn fetch_water(center: (f64, f64), radius_m: u32) -> Result<OverpassResponse> {
+    let (south, west, north, east) = calculate_bbox(center, radius_m);
+
+    let query = format!(
+        r#"[out:json][timeout:180];
+(
+  way["natural"="water"]({south},{west},{north},{east});
+  way["waterway"="riverbank"]({south},{west},{north},{east});
+  way["water"]({south},{west},{north},{east});
+  way["landuse"="reservoir"]({south},{west},{north},{east});
+);
+out body;
+>;
+out skel qt;"#,
+        south = south,
+        west = west,
+        north = north,
+        east = east
+    );
+
+    execute_overpass_query(&query)
+}
+
+/// Fetch park features from Overpass API
+///
+/// Fetches leisure=park and landuse=grass
+pub fn fetch_parks(center: (f64, f64), radius_m: u32) -> Result<OverpassResponse> {
+    let (south, west, north, east) = calculate_bbox(center, radius_m);
+
+    let query = format!(
+        r#"[out:json][timeout:180];
+(
+  way["leisure"="park"]({south},{west},{north},{east});
+  way["landuse"="grass"]({south},{west},{north},{east});
+  way["leisure"="garden"]({south},{west},{north},{east});
+  way["landuse"="meadow"]({south},{west},{north},{east});
 );
 out body;
 >;

@@ -903,6 +903,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "earcutr",
  "geo",
  "indicatif",
  "reqwest",

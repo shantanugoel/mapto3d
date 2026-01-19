@@ -1,9 +1,8 @@
 use crate::mesh::{Triangle, extrude_ribbon};
 
-/// Simple stroke font for 3D text rendering
-/// Each character is defined as a series of strokes (line segments)
-/// Characters are on a 5x7 grid for consistency
-
+/// Simple stroke font for 3D text rendering.
+/// Each character is defined as a series of strokes (line segments).
+/// Characters are on a 5x7 grid for consistency.
 pub struct TextRenderer {
     pub char_width: f32,
     pub char_height: f32,
