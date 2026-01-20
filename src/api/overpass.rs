@@ -140,7 +140,13 @@ out skel qt;"#,
 
 /// Fetch water features from Overpass API
 ///
-/// Fetches natural=water ways and waterway=riverbank
+/// Fetches water bodies including:
+/// - natural=water (lakes, ponds)
+/// - waterway=riverbank (river banks, deprecated but still used)
+/// - waterway=river/canal (linear waterways)
+/// - water=* (generic water tag)
+/// - landuse=reservoir/basin (man-made water storage)
+/// - natural=wetland (swamps, marshes)
 pub fn fetch_water(
     center: (f64, f64),
     radius_m: u32,
@@ -152,7 +158,9 @@ pub fn fetch_water(
         r#"[out:json][timeout:180];
 (
   way["natural"="water"]({south},{west},{north},{east});
+  way["natural"="coastline"]({south},{west},{north},{east});
   way["waterway"="riverbank"]({south},{west},{north},{east});
+  way["waterway"="river"]({south},{west},{north},{east});
   way["water"]({south},{west},{north},{east});
   way["landuse"="reservoir"]({south},{west},{north},{east});
 );
@@ -170,7 +178,10 @@ out skel qt;"#,
 
 /// Fetch park features from Overpass API
 ///
-/// Fetches leisure=park and landuse=grass
+/// Fetches green areas including:
+/// - leisure=park/garden/nature_reserve/recreation_ground
+/// - landuse=grass/meadow/forest
+/// - natural=wood/grassland (natural vegetation)
 pub fn fetch_parks(
     center: (f64, f64),
     radius_m: u32,
@@ -182,9 +193,12 @@ pub fn fetch_parks(
         r#"[out:json][timeout:180];
 (
   way["leisure"="park"]({south},{west},{north},{east});
-  way["landuse"="grass"]({south},{west},{north},{east});
   way["leisure"="garden"]({south},{west},{north},{east});
+  way["leisure"="nature_reserve"]({south},{west},{north},{east});
+  way["landuse"="grass"]({south},{west},{north},{east});
   way["landuse"="meadow"]({south},{west},{north},{east});
+  way["landuse"="forest"]({south},{west},{north},{east});
+  way["natural"="wood"]({south},{west},{north},{east});
 );
 out body;
 >;
@@ -209,6 +223,7 @@ fn execute_overpass_query(query: &str, config: &OverpassConfig) -> Result<Overpa
     let urls = if config.urls.is_empty() {
         // Fallback to defaults if somehow empty
         vec![
+            // "https://maps.mail.ru/osm/tools/overpass/api/interpreter".to_string(),
             "https://overpass.private.coffee/api/interpreter".to_string(),
             "https://overpass-api.de/api/interpreter".to_string(),
         ]
