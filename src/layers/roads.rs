@@ -19,15 +19,16 @@ pub struct RoadConfig {
 impl Default for RoadConfig {
     fn default() -> Self {
         Self {
-            motorway: (3.0, 2.0),
-            primary: (2.5, 1.5),
-            secondary: (2.0, 1.0),
-            tertiary: (1.5, 0.7),
-            residential: (0.8, 0.5),
+            // (width_mm, height_mm) - heights aligned to 0.2mm layer height, min 3 layers
+            motorway: (3.0, 1.6),    // 8 layers
+            primary: (2.5, 1.2),     // 6 layers
+            secondary: (2.0, 0.8),   // 4 layers
+            tertiary: (1.5, 0.6),    // 3 layers
+            residential: (0.8, 0.6), // 3 layers (minimum)
             road_scale: 1.0,
             map_scale_factor: 1.0,
             min_width_mm: 0.6,
-            min_height_mm: 0.4,
+            min_height_mm: 0.6, // 3 layers minimum for solid color
             simplify_level: 0,
         }
     }
@@ -179,14 +180,14 @@ mod tests {
         let config = RoadConfig::default();
         let (w, h) = config.get_dimensions(RoadClass::Motorway);
         assert_eq!(w, 3.0);
-        assert_eq!(h, 2.0);
+        assert_eq!(h, 1.6);
     }
 
     #[test]
     fn test_road_config_scale() {
         let config = RoadConfig::default().with_scale(1.5);
         let (_, h) = config.get_dimensions(RoadClass::Motorway);
-        assert_eq!(h, 3.0);
+        assert_eq!(h, 2.4);
     }
 
     #[test]
@@ -206,6 +207,6 @@ mod tests {
         let config = RoadConfig::default();
         let (w, h) = config.get_dimensions(RoadClass::Residential);
         assert!(w >= 0.6);
-        assert!(h >= 0.4);
+        assert!(h >= 0.6);
     }
 }

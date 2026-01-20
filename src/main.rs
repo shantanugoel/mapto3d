@@ -104,6 +104,10 @@ struct Args {
     /// Higher values reduce triangle count but may lose curve detail
     #[arg(long, default_value = "0", value_parser = clap::value_parser!(u8).range(0..=3))]
     simplify: u8,
+
+    /// Path to TTF font file for text rendering (defaults to fonts/RobotoSerif.ttf)
+    #[arg(long)]
+    font: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -182,6 +186,7 @@ fn main() -> Result<()> {
         .output
         .clone()
         .or_else(|| file_config.as_ref().and_then(|c| c.output.clone()));
+    let font_path = args.font.clone();
 
     let overpass_config = file_config
         .as_ref()
@@ -365,6 +370,7 @@ fn main() -> Result<()> {
         size,
         primary_text.as_deref(),
         secondary_text.as_deref(),
+        font_path.as_deref(),
     );
     if verbose {
         println!("  Text: {} triangles", text_triangles.len());
@@ -420,8 +426,111 @@ fn main() -> Result<()> {
     println!("  File size: {:.1} KB", file_size as f64 / 1024.0);
     println!();
     println!("Open in a 3D slicer to verify and print!");
+    println!();
+    print_color_change_guide(base_height);
 
     Ok(())
+}
+
+/// Print color change guide for multi-color FDM printing at 0.2mm layer height
+fn print_color_change_guide(base_height: f32) {
+    const LAYER_HEIGHT: f32 = 0.2;
+
+    let base_layers = (base_height / LAYER_HEIGHT).round() as i32;
+    let water_bottom_layer = base_layers - 3; // Water is 0.6mm deep (3 layers)
+    let base_top_layer = base_layers;
+    let parks_top_layer = base_layers + 3; // Parks are 0.6mm above base (3 layers)
+    let roads_top_layer = base_layers + 8; // Roads go up to 1.6mm (8 layers)
+    let text_top_layer = base_layers + 10; // Text is 2.0mm tall (10 layers)
+
+    println!("5-Color FDM Printing Guide (0.2mm layer height)");
+    println!("================================================");
+    println!();
+    println!("Feature heights (from base top = 0):");
+    println!("  Water:   -0.6mm (recessed 3 layers into base)");
+    println!("  Parks:   +0.6mm (3 layers above base)");
+    println!("  Roads:   +0.6mm to +1.6mm (3-8 layers, varies by road class)");
+    println!("  Text:    +2.0mm (10 layers - tallest feature)");
+    println!();
+    println!("Layer numbers (from print bed, base = {}mm):", base_height);
+    println!("  Layer 1:        0.0mm (print bed)");
+    println!(
+        "  Layer {}:        {:.1}mm (water starts here)",
+        water_bottom_layer,
+        (water_bottom_layer as f32) * LAYER_HEIGHT
+    );
+    println!(
+        "  Layer {}:       {:.1}mm (base top / water top)",
+        base_top_layer, base_height
+    );
+    println!(
+        "  Layer {}:       {:.1}mm (parks top)",
+        parks_top_layer,
+        base_height + 0.6
+    );
+    println!(
+        "  Layer {}:       {:.1}mm (roads top)",
+        roads_top_layer,
+        base_height + 1.6
+    );
+    println!(
+        "  Layer {}:       {:.1}mm (text top)",
+        text_top_layer,
+        base_height + 2.0
+    );
+    println!();
+    println!("Color change schedule:");
+    println!(
+        "  Color 1 (Base):   Start -> layer {} ({:.1}mm)",
+        water_bottom_layer - 1,
+        ((water_bottom_layer - 1) as f32) * LAYER_HEIGHT
+    );
+    println!(
+        "  Color 2 (Water):  Layer {} -> {} ({:.1}mm -> {:.1}mm)",
+        water_bottom_layer,
+        base_top_layer,
+        (water_bottom_layer as f32) * LAYER_HEIGHT,
+        base_height
+    );
+    println!(
+        "  Color 3 (Parks):  Layer {} -> {} ({:.1}mm -> {:.1}mm)",
+        base_top_layer + 1,
+        parks_top_layer,
+        base_height + LAYER_HEIGHT,
+        base_height + 0.6
+    );
+    println!(
+        "  Color 4 (Roads):  Layer {} -> {} ({:.1}mm -> {:.1}mm)",
+        parks_top_layer + 1,
+        roads_top_layer,
+        base_height + 0.6 + LAYER_HEIGHT,
+        base_height + 1.6
+    );
+    println!(
+        "  Color 5 (Text):   Layer {} -> {} ({:.1}mm -> {:.1}mm)",
+        roads_top_layer + 1,
+        text_top_layer,
+        base_height + 1.6 + LAYER_HEIGHT,
+        base_height + 2.0
+    );
+    println!();
+    println!("Color palette suggestions:");
+    println!("  Classic:    White base, Blue water, Green parks, Gray roads, Black text");
+    println!("  Earth:      Tan base, Blue water, Forest green parks, Brown roads, Black text");
+    println!(
+        "  Monochrome: Light gray base, Medium gray water, Gray parks, Dark gray roads, Black text"
+    );
+    println!("  Night:      Black base, Navy water, Dark green parks, White roads, Gold text");
+    println!("  Vintage:    Cream base, Teal water, Olive parks, Burgundy roads, Brown text");
+    println!("  Ocean:      Sand base, Cyan water, Sage parks, Coral roads, White text");
+    println!();
+    println!(
+        "Tip: In your slicer, add filament change (M600) at layers {}, {}, {}, {}",
+        water_bottom_layer,
+        base_top_layer + 1,
+        parks_top_layer + 1,
+        roads_top_layer + 1
+    );
 }
 
 fn generate_text_layer(
@@ -430,43 +539,44 @@ fn generate_text_layer(
     size_mm: f32,
     primary_text: Option<&str>,
     secondary_text: Option<&str>,
+    font_path: Option<&std::path::Path>,
 ) -> Vec<mesh::Triangle> {
     let mut triangles = Vec::new();
 
-    let text_scale = size_mm / 220.0;
     let text_z = 0.0;
+    let renderer = TextRenderer::new(font_path);
 
-    let city_renderer = TextRenderer::default().with_scale(2.5 * text_scale);
-    let primary = primary_text.map(|s| s.to_uppercase()).unwrap_or_else(|| {
-        let city_upper = city.to_uppercase();
-        city_upper
-            .chars()
-            .map(|c| c.to_string())
-            .collect::<Vec<_>>()
-            .join(" ")
-    });
-    let city_y = 15.0 * text_scale;
-    triangles.extend(city_renderer.render_text_centered(&primary, size_mm / 2.0, city_y, text_z));
+    let primary = primary_text
+        .map(|s| s.to_uppercase())
+        .unwrap_or_else(|| city.to_uppercase());
 
-    let coord_renderer = TextRenderer::default().with_scale(1.0 * text_scale);
+    let target_primary_width = size_mm * 0.75;
+    let primary_scale = renderer.calculate_scale_for_width(&primary, target_primary_width);
+    let primary_y = 12.0 * (size_mm / 220.0);
+    triangles.extend(renderer.render_text_centered(
+        &primary,
+        size_mm / 2.0,
+        primary_y,
+        text_z,
+        primary_scale,
+    ));
+
     let secondary = secondary_text.map(|s| s.to_string()).unwrap_or_else(|| {
         let (lat, lon) = coords;
         let lat_dir = if lat >= 0.0 { "N" } else { "S" };
         let lon_dir = if lon >= 0.0 { "E" } else { "W" };
-        format!(
-            "{:.4} {} / {:.4} {}",
-            lat.abs(),
-            lat_dir,
-            lon.abs(),
-            lon_dir
-        )
+        format!("{:.4}{} / {:.4}{}", lat.abs(), lat_dir, lon.abs(), lon_dir)
     });
-    let coord_y = 5.0 * text_scale;
-    triangles.extend(coord_renderer.render_text_centered(
+
+    let target_secondary_width = size_mm * 0.40;
+    let secondary_scale = renderer.calculate_scale_for_width(&secondary, target_secondary_width);
+    let secondary_y = 4.0 * (size_mm / 220.0);
+    triangles.extend(renderer.render_text_centered(
         &secondary,
         size_mm / 2.0,
-        coord_y,
+        secondary_y,
         text_z,
+        secondary_scale,
     ));
 
     triangles

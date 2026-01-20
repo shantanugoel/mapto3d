@@ -2,7 +2,9 @@ use crate::domain::WaterPolygon;
 use crate::geometry::{Projector, Scaler};
 use crate::mesh::{Triangle, extrude_polygon};
 
-const WATER_Z_BOTTOM: f32 = -1.0;
+/// Water features are recessed into the base plate.
+/// Depth of 0.6mm = 3 layers at 0.2mm layer height for solid color.
+const WATER_Z_BOTTOM: f32 = -0.6;
 const WATER_Z_TOP: f32 = 0.0;
 
 pub fn generate_water_meshes(
