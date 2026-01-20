@@ -1,15 +1,6 @@
 # AGENTS.md - Agentic Coding Guidelines for mapto3d
 
-> mapto3d: Generate 3D-printable STL city maps from OpenStreetMap data
-
-## Project Overview
-
-A Rust CLI tool that:
-1. Geocodes city names via Nominatim API
-2. Fetches roads, water, and parks from Overpass API
-3. Projects WGS84 coordinates to local meters (Transverse Mercator)
-4. Generates 3D mesh geometry (roads as ribbons, areas as extruded polygons)
-5. Outputs binary STL files for 3D printing
+> Generate 3D-printable STL city maps from OpenStreetMap data
 
 **Rust Edition**: 2024 | **MSRV**: 1.92.0+
 
@@ -25,13 +16,11 @@ cargo build --release          # Release build
 # Run
 cargo run -- -c "Monaco" -C "Monaco" -r 2000
 
-# Lint
+# Lint & Format
 cargo clippy                   # Run clippy lints
-cargo clippy -- -D warnings    # Treat warnings as errors
-
-# Format
+cargo clippy -- -D warnings    # Treat warnings as errors (CI mode)
 cargo fmt                      # Format code
-cargo fmt -- --check           # Check formatting (CI)
+cargo fmt -- --check           # Check formatting (CI mode)
 
 # Test - all tests
 cargo test                     # Run all tests
@@ -41,54 +30,14 @@ cargo test test_triangle_normal           # Run test containing this string
 cargo test mesh::validation::tests::      # Run tests in specific module
 cargo test -- --exact test_valid_triangle # Exact match
 
-# Test - single module
-cargo test --lib mesh::validation         # Tests in validation module
+# Test - with output
+cargo test -- --nocapture      # Show println! output
 
-# Test with output
-cargo test -- --nocapture                 # Show println! output
-
-# Check (fast compile check, no codegen)
+# Fast compile check (no codegen)
 cargo check
 
 # Documentation
-cargo doc --open                          # Build and open docs
-```
-
----
-
-## Project Structure
-
-```
-src/
-├── main.rs           # CLI entry point, argument parsing (clap)
-├── lib.rs            # Public module exports
-├── api/              # External API clients
-│   ├── nominatim.rs  # Geocoding API
-│   └── overpass.rs   # OSM data API, RoadDepth enum
-├── config/           # TOML config parsing
-├── domain/           # Domain types
-│   ├── road.rs       # RoadSegment, RoadClass
-│   ├── water.rs      # WaterPolygon
-│   └── park.rs       # ParkPolygon
-├── geometry/         # Coordinate math
-│   ├── projection.rs # WGS84 -> local meters (Projector)
-│   ├── scaling.rs    # Bounds, Scaler
-│   └── simplify.rs   # Douglas-Peucker simplification
-├── layers/           # Mesh generation per feature type
-│   ├── base.rs       # Base plate generation
-│   ├── roads.rs      # Road ribbon extrusion
-│   ├── water.rs      # Water area extrusion
-│   ├── parks.rs      # Park area extrusion
-│   └── text.rs       # Text label rendering
-├── mesh/             # Core mesh types and STL output
-│   ├── builder.rs    # Triangle, MeshBuilder
-│   ├── extrusion.rs  # Polygon extrusion (with holes)
-│   ├── ribbon.rs     # Polyline -> 3D ribbon
-│   ├── triangulation.rs  # Polygon triangulation (earcutr)
-│   ├── validation.rs # Mesh validation and repair
-│   └── stl.rs        # Binary STL writer
-└── osm/              # OSM data parsing
-    └── parser.rs     # Overpass response -> domain types
+cargo doc --open               # Build and open docs
 ```
 
 ---
@@ -96,43 +45,41 @@ src/
 ## Code Style Guidelines
 
 ### Imports
-
-Order imports in this sequence, separated by blank lines:
-1. `use super::` / `use crate::` (local)
-2. External crates
-3. `std::` library
+Order imports: external crates, then `std::`, then local (`use crate::`/`use super::`).
+Separate groups with blank lines.
 
 ```rust
-use super::Triangle;                      // Local module
-use crate::domain::RoadClass;             // Crate modules
-
 use anyhow::{Context, Result, bail};      // External crates
 use serde::Deserialize;
 
 use std::collections::HashMap;            // Standard library
 use std::path::PathBuf;
+
+use crate::domain::RoadClass;             // Crate modules
+use super::Triangle;                      // Local module
 ```
 
-### Types and Naming
+### Naming Conventions
 
-- **Structs**: PascalCase (`RoadSegment`, `ValidationResult`)
-- **Enums**: PascalCase with PascalCase variants (`RoadClass::Motorway`)
-- **Functions**: snake_case (`parse_roads`, `calculate_normal`)
-- **Constants**: SCREAMING_SNAKE_CASE (`MIN_TRIANGLE_AREA`, `USER_AGENT`)
-- **Type aliases**: PascalCase
+| Item | Convention | Example |
+|------|------------|---------|
+| Structs/Enums | PascalCase | `RoadSegment`, `RoadClass::Motorway` |
+| Functions | snake_case | `parse_roads`, `calculate_normal` |
+| Constants | SCREAMING_SNAKE_CASE | `MIN_TRIANGLE_AREA`, `USER_AGENT` |
+| Type aliases | PascalCase | `Coord` |
 
-Prefer concrete types over generics unless flexibility is needed:
-```rust
-// Good: concrete when sufficient
-pub fn project_points(&self, points: &[(f64, f64)]) -> Vec<(f64, f64)>
+### Numeric Types
 
-// Good: generic when needed for flexibility
-pub fn extend(&mut self, triangles: impl IntoIterator<Item = Triangle>)
-```
+| Context | Type | Reason |
+|---------|------|--------|
+| WGS84 coordinates (lat/lon) | `f64` | Precision for geospatial math |
+| Mesh geometry (vertices, normals) | `f32` | STL format requirement |
+| Physical dimensions (mm) | `f32` | Model output |
+| Counts/indices | `usize` | Rust convention |
+| API parameters (radius, etc.) | `u32` | CLI input |
 
 ### Error Handling
-
-Use `anyhow` for application errors with context:
+Use `anyhow` with context for application errors:
 ```rust
 use anyhow::{Context, Result, bail};
 
@@ -148,25 +95,12 @@ fn load_config(path: &Path) -> Result<Config> {
 }
 ```
 
-Use `thiserror` for library/domain errors when needed for pattern matching.
-
 ### Documentation
-
-- Add doc comments (`///`) for all public items
-- Use `//!` for module-level documentation
-- Include examples in doc comments for complex functions:
-
-```rust
-/// Calculate the normal vector for a triangle using the cross product
-///
-/// Uses the right-hand rule: CCW winding = outward normal
-fn calculate_normal(vertices: &[[f32; 3]; 3]) -> [f32; 3] { ... }
-```
+- `///` for public items, `//!` for module-level docs
+- Include examples in doc comments for complex functions
 
 ### Testing
-
-Tests live in `#[cfg(test)] mod tests` at bottom of each file:
-
+Tests in `#[cfg(test)] mod tests` at bottom of file:
 ```rust
 #[cfg(test)]
 mod tests {
@@ -179,39 +113,18 @@ mod tests {
     }
 }
 ```
-
-- Test function names: `test_<what_is_being_tested>`
-- Use descriptive assertions with context when helpful
-- Helper functions for test setup go above `#[test]` functions
-
-### Numeric Types
-
-- **WGS84 coordinates** (lat/lon): `f64`
-- **Mesh geometry** (vertices, normals): `f32` (STL format requirement)
-- **Physical dimensions** (mm): `f32`
-- **Counts/indices**: `usize`
-- **API parameters** (radius, etc.): `u32`
+- Test names: `test_<what_is_being_tested>`
+- Helper functions above `#[test]` functions
 
 ### Struct Patterns
-
-Use builder pattern with `with_*` methods for configuration:
+Builder pattern with `with_*` methods:
 ```rust
-impl RoadConfig {
-    pub fn with_scale(mut self, scale: f32) -> Self {
-        self.road_scale = scale;
-        self
-    }
-}
-
-// Usage
 let config = RoadConfig::default()
     .with_scale(1.5)
     .with_map_radius(radius, size);
 ```
 
-### Guard Clauses
-
-Prefer early returns for validation:
+Guard clauses for early returns:
 ```rust
 pub fn extrude_polygon(outer: &[(f32, f32)], ...) -> Vec<Triangle> {
     if outer.len() < 3 {
@@ -238,25 +151,23 @@ pub fn extrude_polygon(outer: &[(f32, f32)], ...) -> Vec<Triangle> {
 
 ---
 
-## Common Patterns
+## Architecture Overview
 
-### Coordinate Pipeline
+```
+src/
+├── main.rs           # CLI entry point, argument parsing (clap)
+├── api/              # External API clients (Nominatim, Overpass)
+├── config/           # TOML config parsing, feature heights
+├── domain/           # Core types: RoadSegment, WaterPolygon, ParkPolygon
+├── geometry/         # Projection (WGS84->meters), scaling, simplification
+├── layers/           # Mesh generation: base, roads, water, parks, text
+├── mesh/             # Triangle, MeshBuilder, STL writer, validation
+└── osm/              # Overpass response parsing
+```
+
+**Coordinate Pipeline:**
 ```
 WGS84 (f64) -> Projector -> Local meters (f64) -> Scaler -> Model mm (f32)
-```
-
-### Mesh Generation
-```rust
-// 1. Project coordinates
-let projected = projector.project_points(&polygon.points);
-
-// 2. Scale to physical size
-let scaled: Vec<(f32, f32)> = projected.iter()
-    .map(|&(x, y)| scaler.scale(x, y))
-    .collect();
-
-// 3. Extrude to 3D
-let triangles = extrude_polygon(&scaled, &holes, z_bottom, z_top);
 ```
 
 ---
