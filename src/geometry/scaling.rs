@@ -68,6 +68,16 @@ pub struct Scaler {
 }
 
 impl Scaler {
+    #[allow(dead_code)]
+    pub fn new(scale: f64, offset: (f64, f64)) -> Self {
+        Self {
+            scale,
+            offset_x: offset.0,
+            offset_y: offset.1,
+            target_mm: 220.0,
+        }
+    }
+
     /// Create a scaler from bounds and target physical size
     ///
     /// # Arguments
