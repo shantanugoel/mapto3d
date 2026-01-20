@@ -20,7 +20,7 @@ use layers::{
     RoadConfig, TextRenderer, generate_base_plate, generate_park_meshes, generate_road_meshes,
     generate_water_meshes,
 };
-use mesh::{Triangle, stl::estimate_stl_size, validate_and_fix, write_stl};
+use mesh::{stl::estimate_stl_size, validate_and_fix, write_stl};
 use osm::{parse_parks, parse_roads, parse_water};
 
 /// Generate 3D-printable STL city maps from OpenStreetMap data
@@ -384,47 +384,25 @@ fn main() -> Result<()> {
         start.elapsed().as_secs_f32()
     ));
 
-    let spinner = create_spinner("Validating and writing STL files...");
+    let spinner = create_spinner("Validating and writing STL file...");
     let start = Instant::now();
 
-    let base_stem = output_path.file_stem().unwrap_or_default().to_string_lossy();
-    let parent = output_path.parent().unwrap_or(std::path::Path::new("."));
+    let mut all_triangles = Vec::new();
+    all_triangles.extend(base_triangles);
+    all_triangles.extend(water_triangles);
+    all_triangles.extend(park_triangles);
+    all_triangles.extend(road_triangles);
+    all_triangles.extend(text_triangles);
 
-    let layers: Vec<(&str, Vec<Triangle>)> = vec![
-        ("base", base_triangles),
-        ("water", water_triangles),
-        ("parks", park_triangles),
-        ("roads", road_triangles),
-        ("text", text_triangles),
-    ];
+    let (validated, _) = validate_and_fix(all_triangles);
+    let file_size = estimate_stl_size(validated.len());
 
-    let mut total_written = 0usize;
-    let mut total_file_size = 0usize;
-    let mut written_files = Vec::new();
-
-    for (name, triangles) in layers {
-        if triangles.is_empty() {
-            continue;
-        }
-
-        let (validated, _) = validate_and_fix(triangles);
-        if validated.is_empty() {
-            continue;
-        }
-
-        let file_path = parent.join(format!("{}_{}.stl", base_stem, name));
-        write_stl(&file_path, &validated).context(format!("Failed to write {} STL", name))?;
-
-        total_written += validated.len();
-        total_file_size += estimate_stl_size(validated.len());
-        written_files.push((name.to_string(), validated.len(), file_path));
-    }
+    write_stl(&output_path, &validated).context("Failed to write STL file")?;
 
     spinner.finish_with_message(format!(
-        "Wrote {} files, {} triangles total ({:.1} KB) [{:.1}s]",
-        written_files.len(),
-        total_written,
-        total_file_size as f64 / 1024.0,
+        "Wrote {} triangles ({:.1} KB) [{:.1}s]",
+        validated.len(),
+        file_size as f64 / 1024.0,
         start.elapsed().as_secs_f32()
     ));
 
@@ -434,18 +412,7 @@ fn main() -> Result<()> {
         total_start.elapsed().as_secs_f32()
     );
     println!();
-    println!("Output files (separate layers for easy slicer selection):");
-    for (name, count, path) in &written_files {
-        println!(
-            "  {}: {} ({} triangles)",
-            name,
-            path.display(),
-            count
-        );
-    }
-    println!();
-    println!("Import all files into your slicer as separate objects.");
-    println!("This allows easy selection and color assignment per feature.");
+    println!("Output: {}", output_path.display());
     println!();
     print_color_change_guide(base_height);
 

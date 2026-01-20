@@ -1,4 +1,4 @@
-use crate::config::heights::TEXT_HEIGHT;
+use crate::config::heights::TEXT_Z_TOP;
 use crate::mesh::{Triangle, extrude_ribbon_ex};
 
 use std::path::Path;
@@ -21,7 +21,7 @@ impl TtfTextRenderer {
 
         Some(Self {
             font_data,
-            extrude_height: TEXT_HEIGHT,
+            extrude_height: TEXT_Z_TOP,
         })
     }
 
@@ -166,7 +166,7 @@ impl Default for StrokeTextRenderer {
             char_height: 7.0,
             char_spacing: 1.5,
             stroke_width: 0.8,
-            extrude_height: TEXT_HEIGHT,
+            extrude_height: TEXT_Z_TOP,
         }
     }
 }
