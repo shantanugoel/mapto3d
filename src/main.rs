@@ -56,7 +56,7 @@ struct Args {
     country: Option<String>,
 
     /// Latitude for direct coordinate input (use with --lon)
-    #[arg(long, requires = "lon")]
+    #[arg(long, requires = "lon", allow_hyphen_values = true)]
     lat: Option<f64>,
 
     /// Longitude for direct coordinate input (use with --lat)
