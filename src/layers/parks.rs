@@ -1,12 +1,12 @@
-use crate::config::heights::{PARK_Z_BOTTOM, PARK_Z_TOP};
 use crate::domain::ParkPolygon;
 use crate::geometry::{Projector, Scaler};
-use crate::mesh::{Triangle, extrude_polygon_ex};
+use crate::mesh::{extrude_polygon_ex, Triangle};
 
 pub fn generate_park_meshes(
     park_polygons: &[ParkPolygon],
     projector: &Projector,
     scaler: &Scaler,
+    z_top: f32,
 ) -> Vec<Triangle> {
     let mut all_triangles = Vec::new();
 
@@ -23,7 +23,7 @@ pub fn generate_park_meshes(
 
         let scaled: Vec<(f32, f32)> = projected.iter().map(|&(x, y)| scaler.scale(x, y)).collect();
 
-        let triangles = extrude_polygon_ex(&scaled, &[], PARK_Z_BOTTOM, PARK_Z_TOP, true);
+        let triangles = extrude_polygon_ex(&scaled, &[], 0.0, z_top, true);
         all_triangles.extend(triangles);
     }
 
@@ -41,7 +41,7 @@ mod tests {
         let bounds = Bounds::from_points(&[(0.0, 0.0), (1000.0, 1000.0)]).unwrap();
         let scaler = Scaler::from_bounds(&bounds, 220.0);
 
-        let triangles = generate_park_meshes(&[], &projector, &scaler);
+        let triangles = generate_park_meshes(&[], &projector, &scaler, 3.2);
         assert!(triangles.is_empty());
     }
 }

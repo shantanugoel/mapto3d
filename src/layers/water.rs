@@ -1,12 +1,12 @@
-use crate::config::heights::{WATER_Z_BOTTOM, WATER_Z_TOP};
 use crate::domain::WaterPolygon;
 use crate::geometry::{Projector, Scaler};
-use crate::mesh::{Triangle, extrude_polygon};
+use crate::mesh::{extrude_polygon, Triangle};
 
 pub fn generate_water_meshes(
     water_polygons: &[WaterPolygon],
     projector: &Projector,
     scaler: &Scaler,
+    z_top: f32,
 ) -> Vec<Triangle> {
     let mut all_triangles = Vec::new();
 
@@ -36,7 +36,7 @@ pub fn generate_water_meshes(
             })
             .collect();
 
-        let triangles = extrude_polygon(&scaled, &holes_scaled, WATER_Z_BOTTOM, WATER_Z_TOP);
+        let triangles = extrude_polygon(&scaled, &holes_scaled, 0.0, z_top);
         all_triangles.extend(triangles);
     }
 
@@ -54,7 +54,7 @@ mod tests {
         let bounds = Bounds::from_points(&[(0.0, 0.0), (1000.0, 1000.0)]).unwrap();
         let scaler = Scaler::from_bounds(&bounds, 220.0);
 
-        let triangles = generate_water_meshes(&[], &projector, &scaler);
+        let triangles = generate_water_meshes(&[], &projector, &scaler, 2.6);
         assert!(triangles.is_empty());
     }
 }

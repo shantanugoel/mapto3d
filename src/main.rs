@@ -13,8 +13,7 @@ mod mesh;
 mod osm;
 
 use api::{RoadDepth, fetch_parks, fetch_roads_with_depth, fetch_water, geocode_city};
-use config::FileConfig;
-use domain::{ParkPolygon, WaterPolygon};
+use config::{FeatureHeights, FileConfig};
 use geometry::{Bounds, Projector, Scaler};
 use layers::{
     RoadConfig, TextRenderer, generate_base_plate, generate_park_meshes, generate_road_meshes,
@@ -108,6 +107,14 @@ struct Args {
     /// Path to TTF font file for text rendering (defaults to fonts/RobotoSerif.ttf)
     #[arg(long)]
     font: Option<PathBuf>,
+
+    /// Enable water features (rivers, lakes, sea)
+    #[arg(long)]
+    water: bool,
+
+    /// Enable park features (parks, forests, green areas)
+    #[arg(long)]
+    parks: bool,
 }
 
 fn main() -> Result<()> {
@@ -231,6 +238,8 @@ fn main() -> Result<()> {
         println!("  Road scale: {}", road_scale);
         println!("  Road depth: {:?}", road_depth);
         println!("  Simplify level: {}", simplify);
+        println!("  Water features: {}", if args.water { "enabled" } else { "disabled" });
+        println!("  Park features: {}", if args.parks { "enabled" } else { "disabled" });
         println!("  Output: {}", output_path.display());
         println!("  Overpass mirrors: {}", overpass_config.urls.len());
         println!();
@@ -280,35 +289,47 @@ fn main() -> Result<()> {
         start.elapsed().as_secs_f32()
     ));
 
-    let spinner = create_spinner("Fetching water features...");
-    let start = Instant::now();
-    let water_response =
-        fetch_water(center, radius, &overpass_config).context("Failed to fetch water data")?;
-    spinner.finish_with_message(format!(
-        "Fetched {} water elements [{:.1}s]",
-        water_response.elements.len(),
-        start.elapsed().as_secs_f32()
-    ));
+    let water = if args.water {
+        let spinner = create_spinner("Fetching water features...");
+        let start = Instant::now();
+        let water_response =
+            fetch_water(center, radius, &overpass_config).context("Failed to fetch water data")?;
+        spinner.finish_with_message(format!(
+            "Fetched {} water elements [{:.1}s]",
+            water_response.elements.len(),
+            start.elapsed().as_secs_f32()
+        ));
 
-    let water: Vec<WaterPolygon> = parse_water(&water_response);
-    if verbose {
-        println!("  Parsed {} water polygons", water.len());
-    }
+        let parsed = parse_water(&water_response);
+        if verbose {
+            println!("  Parsed {} water polygons", parsed.len());
+        }
+        parsed
+    } else {
+        Vec::new()
+    };
 
-    let spinner = create_spinner("Fetching park features...");
-    let start = Instant::now();
-    let parks_response =
-        fetch_parks(center, radius, &overpass_config).context("Failed to fetch park data")?;
-    spinner.finish_with_message(format!(
-        "Fetched {} park elements [{:.1}s]",
-        parks_response.elements.len(),
-        start.elapsed().as_secs_f32()
-    ));
+    let parks = if args.parks {
+        let spinner = create_spinner("Fetching park features...");
+        let start = Instant::now();
+        let parks_response =
+            fetch_parks(center, radius, &overpass_config).context("Failed to fetch park data")?;
+        spinner.finish_with_message(format!(
+            "Fetched {} park elements [{:.1}s]",
+            parks_response.elements.len(),
+            start.elapsed().as_secs_f32()
+        ));
 
-    let parks: Vec<ParkPolygon> = parse_parks(&parks_response);
-    if verbose {
-        println!("  Parsed {} park polygons", parks.len());
-    }
+        let parsed = parse_parks(&parks_response);
+        if verbose {
+            println!("  Parsed {} park polygons", parsed.len());
+        }
+        parsed
+    } else {
+        Vec::new()
+    };
+
+    let feature_heights = FeatureHeights::new(base_height, args.water, args.parks);
 
     let spinner = create_spinner("Setting up coordinate projection...");
     let projector = Projector::new(center);
@@ -341,20 +362,31 @@ fn main() -> Result<()> {
         println!("  Base plate: {} triangles", base_triangles.len());
     }
 
-    let water_triangles = generate_water_meshes(&water, &projector, &scaler);
-    if verbose {
-        println!("  Water: {} triangles", water_triangles.len());
-    }
+    let water_triangles = if args.water {
+        let triangles = generate_water_meshes(&water, &projector, &scaler, feature_heights.water_z_top);
+        if verbose {
+            println!("  Water: {} triangles", triangles.len());
+        }
+        triangles
+    } else {
+        Vec::new()
+    };
 
-    let park_triangles = generate_park_meshes(&parks, &projector, &scaler);
-    if verbose {
-        println!("  Parks: {} triangles", park_triangles.len());
-    }
+    let park_triangles = if args.parks {
+        let triangles = generate_park_meshes(&parks, &projector, &scaler, feature_heights.park_z_top);
+        if verbose {
+            println!("  Parks: {} triangles", triangles.len());
+        }
+        triangles
+    } else {
+        Vec::new()
+    };
 
     let road_config = RoadConfig::default()
         .with_scale(road_scale)
         .with_map_radius(radius, size)
-        .with_simplify_level(simplify);
+        .with_simplify_level(simplify)
+        .with_z_top(feature_heights.road_z_top);
     let road_triangles = generate_road_meshes(&roads, &projector, &scaler, &road_config);
     if verbose {
         println!("  Roads: {} triangles", road_triangles.len());
@@ -367,6 +399,7 @@ fn main() -> Result<()> {
         primary_text.as_deref(),
         secondary_text.as_deref(),
         font_path.as_deref(),
+        feature_heights.text_z_top,
     );
     if verbose {
         println!("  Text: {} triangles", text_triangles.len());
@@ -414,19 +447,17 @@ fn main() -> Result<()> {
     println!();
     println!("Output: {}", output_path.display());
     println!();
-    print_color_change_guide(base_height);
+    print_color_change_guide(&feature_heights);
 
     Ok(())
 }
 
-fn print_color_change_guide(base_height: f32) {
-    use mapto3d::config::heights::*;
+fn print_color_change_guide(heights: &FeatureHeights) {
+    use mapto3d::config::heights::LAYER_HEIGHT;
 
-    let base_layers = (base_height / LAYER_HEIGHT).round() as i32;
-    let water_top_layers = (WATER_Z_TOP / LAYER_HEIGHT).round() as i32;
-    let parks_top_layers = (PARK_Z_TOP / LAYER_HEIGHT).round() as i32;
-    let roads_top_layers = (ROAD_Z_TOP / LAYER_HEIGHT).round() as i32;
-    let text_top_layers = (TEXT_Z_TOP / LAYER_HEIGHT).round() as i32;
+    let base_layers = (heights.base_height / LAYER_HEIGHT).round() as i32;
+    let roads_top_layers = (heights.road_z_top / LAYER_HEIGHT).round() as i32;
+    let text_top_layers = (heights.text_z_top / LAYER_HEIGHT).round() as i32;
 
     println!("Multi-Color FDM Printing Guide (0.2mm layer height)");
     println!("====================================================");
@@ -434,55 +465,87 @@ fn print_color_change_guide(base_height: f32) {
     println!("Solid column architecture - all features start at z=0, differ in height:");
     println!(
         "  Base:    0.0mm -> {:.1}mm ({} layers)",
-        base_height, base_layers
+        heights.base_height, base_layers
     );
-    println!(
-        "  Water:   0.0mm -> {:.1}mm ({} layers)",
-        WATER_Z_TOP, water_top_layers
-    );
-    println!(
-        "  Parks:   0.0mm -> {:.1}mm ({} layers)",
-        PARK_Z_TOP, parks_top_layers
-    );
+
+    let mut color_num = 1;
+
+    if heights.water_enabled {
+        let water_top_layers = (heights.water_z_top / LAYER_HEIGHT).round() as i32;
+        println!(
+            "  Water:   0.0mm -> {:.1}mm ({} layers)",
+            heights.water_z_top, water_top_layers
+        );
+    }
+
+    if heights.parks_enabled {
+        let parks_top_layers = (heights.park_z_top / LAYER_HEIGHT).round() as i32;
+        println!(
+            "  Parks:   0.0mm -> {:.1}mm ({} layers)",
+            heights.park_z_top, parks_top_layers
+        );
+    }
+
     println!(
         "  Roads:   0.0mm -> {:.1}mm ({} layers)",
-        ROAD_Z_TOP, roads_top_layers
+        heights.road_z_top, roads_top_layers
     );
     println!(
         "  Text:    0.0mm -> {:.1}mm ({} layers - tallest)",
-        TEXT_Z_TOP, text_top_layers
+        heights.text_z_top, text_top_layers
     );
     println!();
     println!(
         "Total height: {:.1}mm = {} layers",
-        TEXT_Z_TOP, text_top_layers
+        heights.text_z_top, text_top_layers
     );
     println!();
     println!("Color change schedule (based on absolute feature heights):");
-    println!("  Layers 1-{}: Base only (Color 1)", base_layers);
+    println!("  Layers 1-{}: Base only (Color {})", base_layers, color_num);
+    color_num += 1;
+    let mut prev_layers = base_layers;
+
+    if heights.water_enabled {
+        let water_top_layers = (heights.water_z_top / LAYER_HEIGHT).round() as i32;
+        println!(
+            "  Layers {}-{}: Water tops out at {:.1}mm (Color {} for water areas)",
+            prev_layers + 1,
+            water_top_layers,
+            heights.water_z_top,
+            color_num
+        );
+        color_num += 1;
+        prev_layers = water_top_layers;
+    }
+
+    if heights.parks_enabled {
+        let parks_top_layers = (heights.park_z_top / LAYER_HEIGHT).round() as i32;
+        println!(
+            "  Layers {}-{}: Parks top out at {:.1}mm (Color {} for park areas)",
+            prev_layers + 1,
+            parks_top_layers,
+            heights.park_z_top,
+            color_num
+        );
+        color_num += 1;
+        prev_layers = parks_top_layers;
+    }
+
     println!(
-        "  Layers {}-{}: Water tops out at {:.1}mm (Color 2 for water areas)",
-        base_layers + 1,
-        water_top_layers,
-        WATER_Z_TOP
-    );
-    println!(
-        "  Layers {}-{}: Parks top out at {:.1}mm (Color 3 for park areas)",
-        water_top_layers + 1,
-        parks_top_layers,
-        PARK_Z_TOP
-    );
-    println!(
-        "  Layers {}-{}: Roads top out at {:.1}mm (Color 4 for road areas)",
-        parks_top_layers + 1,
+        "  Layers {}-{}: Roads top out at {:.1}mm (Color {} for road areas)",
+        prev_layers + 1,
         roads_top_layers,
-        ROAD_Z_TOP
+        heights.road_z_top,
+        color_num
     );
+    color_num += 1;
+
     println!(
-        "  Layers {}-{}: Text tops out at {:.1}mm (Color 5 for text)",
+        "  Layers {}-{}: Text tops out at {:.1}mm (Color {} for text)",
         roads_top_layers + 1,
         text_top_layers,
-        TEXT_Z_TOP
+        heights.text_z_top,
+        color_num
     );
     println!();
     println!("NOTE: With solid columns, features overlap in XY space.");
@@ -490,15 +553,31 @@ fn print_color_change_guide(base_height: f32) {
     println!("For clean color separation, use a multi-material slicer like PrusaSlicer");
     println!("with separate STL files per feature, or accept blended colors.");
     println!();
-    println!("Color palette suggestions:");
-    println!("  Classic:    White base, Blue water, Green parks, Gray roads, Black text");
-    println!("  Earth:      Tan base, Blue water, Forest green parks, Brown roads, Black text");
-    println!(
-        "  Monochrome: Light gray base, Medium gray water, Gray parks, Dark gray roads, Black text"
-    );
-    println!("  Night:      Black base, Navy water, Dark green parks, White roads, Gold text");
-    println!("  Vintage:    Cream base, Teal water, Olive parks, Burgundy roads, Brown text");
-    println!("  Ocean:      Sand base, Cyan water, Sage parks, Coral roads, White text");
+
+    if heights.water_enabled && heights.parks_enabled {
+        println!("Color palette suggestions:");
+        println!("  Classic:    White base, Blue water, Green parks, Gray roads, Black text");
+        println!("  Earth:      Tan base, Blue water, Forest green parks, Brown roads, Black text");
+        println!(
+            "  Monochrome: Light gray base, Medium gray water, Gray parks, Dark gray roads, Black text"
+        );
+        println!("  Night:      Black base, Navy water, Dark green parks, White roads, Gold text");
+    } else if heights.water_enabled {
+        println!("Color palette suggestions:");
+        println!("  Classic:    White base, Blue water, Gray roads, Black text");
+        println!("  Ocean:      Sand base, Cyan water, Coral roads, White text");
+        println!("  Night:      Black base, Navy water, White roads, Gold text");
+    } else if heights.parks_enabled {
+        println!("Color palette suggestions:");
+        println!("  Classic:    White base, Green parks, Gray roads, Black text");
+        println!("  Earth:      Tan base, Forest green parks, Brown roads, Black text");
+        println!("  Night:      Black base, Dark green parks, White roads, Gold text");
+    } else {
+        println!("Color palette suggestions:");
+        println!("  Classic:    White base, Gray roads, Black text");
+        println!("  Monochrome: Light gray base, Dark gray roads, Black text");
+        println!("  Night:      Black base, White roads, Gold text");
+    }
 }
 
 fn generate_text_layer(
@@ -508,11 +587,12 @@ fn generate_text_layer(
     primary_text: Option<&str>,
     secondary_text: Option<&str>,
     font_path: Option<&std::path::Path>,
+    text_z_top: f32,
 ) -> Vec<mesh::Triangle> {
     let mut triangles = Vec::new();
 
-    let text_z = mapto3d::config::heights::TEXT_Z_BOTTOM;
-    let renderer = TextRenderer::new(font_path);
+    let text_z = 0.0;
+    let renderer = TextRenderer::new(font_path, text_z_top);
 
     let primary = primary_text
         .map(|s| s.to_uppercase())

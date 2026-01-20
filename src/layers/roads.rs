@@ -1,7 +1,6 @@
-use crate::config::heights::{ROAD_Z_BOTTOM, ROAD_Z_TOP};
 use crate::domain::{RoadClass, RoadSegment};
-use crate::geometry::{Projector, Scaler, simplify_polyline};
-use crate::mesh::{Triangle, extrude_ribbon_ex};
+use crate::geometry::{simplify_polyline, Projector, Scaler};
+use crate::mesh::{extrude_ribbon_ex, Triangle};
 
 #[derive(Debug, Clone)]
 pub struct RoadConfig {
@@ -13,6 +12,7 @@ pub struct RoadConfig {
     pub width_scale: f32,
     pub min_width_mm: f32,
     pub simplify_level: u8,
+    pub z_top: f32,
 }
 
 impl Default for RoadConfig {
@@ -26,6 +26,7 @@ impl Default for RoadConfig {
             width_scale: 1.0,
             min_width_mm: 0.6,
             simplify_level: 0,
+            z_top: 3.8,
         }
     }
 }
@@ -70,6 +71,11 @@ impl RoadConfig {
 
     pub fn with_simplify_level(mut self, level: u8) -> Self {
         self.simplify_level = level.min(3);
+        self
+    }
+
+    pub fn with_z_top(mut self, z_top: f32) -> Self {
+        self.z_top = z_top;
         self
     }
 
@@ -137,9 +143,8 @@ pub fn generate_road_meshes(
         let scaled: Vec<(f32, f32)> = projected.iter().map(|&(x, y)| scaler.scale(x, y)).collect();
 
         let width = config.get_width(road.class);
-        let road_height = ROAD_Z_TOP - ROAD_Z_BOTTOM;
 
-        let triangles = extrude_ribbon_ex(&scaled, width, road_height, ROAD_Z_BOTTOM, true, true);
+        let triangles = extrude_ribbon_ex(&scaled, width, config.z_top, 0.0, true, true);
         all_triangles.extend(triangles);
     }
 
@@ -154,14 +159,14 @@ mod tests {
     fn test_road_config_width() {
         let config = RoadConfig::default();
         let w = config.get_width(RoadClass::Motorway);
-        assert_eq!(w, 3.0);
+        assert_eq!(w, 1.5);
     }
 
     #[test]
     fn test_road_config_scale() {
         let config = RoadConfig::default().with_scale(1.5);
         let w = config.get_width(RoadClass::Motorway);
-        assert_eq!(w, 4.5);
+        assert_eq!(w, 2.25);
     }
 
     #[test]

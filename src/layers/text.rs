@@ -1,4 +1,3 @@
-use crate::config::heights::TEXT_Z_TOP;
 use crate::mesh::{Triangle, extrude_ribbon_ex};
 
 use std::path::Path;
@@ -11,7 +10,7 @@ pub struct TtfTextRenderer {
 }
 
 impl TtfTextRenderer {
-    pub fn load(font_path: &Path) -> Option<Self> {
+    pub fn load(font_path: &Path, extrude_height: f32) -> Option<Self> {
         let font_data = std::fs::read(font_path).ok()?;
         let face = fontmesh::Face::parse(&font_data, 0).ok()?;
 
@@ -21,18 +20,18 @@ impl TtfTextRenderer {
 
         Some(Self {
             font_data,
-            extrude_height: TEXT_Z_TOP,
+            extrude_height,
         })
     }
 
-    pub fn load_default() -> Option<Self> {
+    pub fn load_default(extrude_height: f32) -> Option<Self> {
         let default_paths = [
             Path::new("fonts/RobotoSerif.ttf"),
             Path::new("./fonts/RobotoSerif.ttf"),
         ];
         for path in &default_paths {
             if path.exists()
-                && let Some(renderer) = Self::load(path)
+                && let Some(renderer) = Self::load(path, extrude_height)
             {
                 return Some(renderer);
             }
@@ -159,19 +158,17 @@ pub struct StrokeTextRenderer {
     pub extrude_height: f32,
 }
 
-impl Default for StrokeTextRenderer {
-    fn default() -> Self {
+impl StrokeTextRenderer {
+    pub fn new(extrude_height: f32) -> Self {
         Self {
             char_width: 5.0,
             char_height: 7.0,
             char_spacing: 1.5,
             stroke_width: 0.8,
-            extrude_height: TEXT_Z_TOP,
+            extrude_height,
         }
     }
-}
 
-impl StrokeTextRenderer {
     pub fn with_scale(mut self, scale: f32) -> Self {
         self.char_width *= scale;
         self.char_height *= scale;
@@ -249,16 +246,16 @@ pub enum TextRenderer {
 }
 
 impl TextRenderer {
-    pub fn new(font_path: Option<&Path>) -> Self {
+    pub fn new(font_path: Option<&Path>, extrude_height: f32) -> Self {
         if let Some(path) = font_path
-            && let Some(ttf) = TtfTextRenderer::load(path)
+            && let Some(ttf) = TtfTextRenderer::load(path, extrude_height)
         {
             return Self::Ttf(ttf);
         }
-        if let Some(ttf) = TtfTextRenderer::load_default() {
+        if let Some(ttf) = TtfTextRenderer::load_default(extrude_height) {
             return Self::Ttf(ttf);
         }
-        Self::Stroke(StrokeTextRenderer::default())
+        Self::Stroke(StrokeTextRenderer::new(extrude_height))
     }
 
     pub fn render_text_centered(
@@ -618,27 +615,27 @@ mod tests {
 
     #[test]
     fn test_stroke_text_width() {
-        let renderer = StrokeTextRenderer::default();
+        let renderer = StrokeTextRenderer::new(4.4);
         let width = renderer.text_width("AB");
         assert!((width - 11.5).abs() < 0.01);
     }
 
     #[test]
     fn test_stroke_render_single_char() {
-        let renderer = StrokeTextRenderer::default();
+        let renderer = StrokeTextRenderer::new(4.4);
         let triangles = renderer.render_text("A", 0.0, 0.0, 0.0);
         assert!(!triangles.is_empty());
     }
 
     #[test]
     fn test_text_renderer_fallback() {
-        let renderer = TextRenderer::new(None);
+        let renderer = TextRenderer::new(None, 4.4);
         assert!(!renderer.is_ttf() || renderer.is_ttf());
     }
 
     #[test]
     fn test_scale_calculation() {
-        let renderer = StrokeTextRenderer::default();
+        let renderer = StrokeTextRenderer::new(4.4);
         let scale = renderer.calculate_scale_for_width("TEST", 100.0);
         assert!(scale > 0.0);
     }
@@ -650,14 +647,14 @@ mod tests {
             return;
         }
 
-        let ttf_renderer = TtfTextRenderer::load(path);
+        let ttf_renderer = TtfTextRenderer::load(path, 4.4);
         if ttf_renderer.is_some() {
             let triangles = ttf_renderer
                 .unwrap()
                 .render_text("TEST", 0.0, 0.0, 0.0, 10.0);
             assert!(!triangles.is_empty());
         } else {
-            let stroke = StrokeTextRenderer::default();
+            let stroke = StrokeTextRenderer::new(4.4);
             let triangles = stroke.render_text("TEST", 0.0, 0.0, 0.0);
             assert!(!triangles.is_empty());
         }
@@ -665,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_text_renderer_produces_triangles() {
-        let renderer = TextRenderer::new(None);
+        let renderer = TextRenderer::new(None, 4.4);
         let triangles = renderer.render_text_centered("TEST", 100.0, 50.0, 0.0, 5.0);
         assert!(
             !triangles.is_empty(),

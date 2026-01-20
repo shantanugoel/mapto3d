@@ -26,6 +26,8 @@ pub mod heights {
     pub const BASE_HEIGHT: f32 = 2.0;
     pub const BASE_Z_TOP: f32 = BASE_HEIGHT;
 
+    pub const FEATURE_INCREMENT: f32 = 0.6;
+
     // Water: 0.6mm above base top = 2.6mm absolute
     pub const WATER_HEIGHT: f32 = 0.6;
     pub const WATER_Z_BOTTOM: f32 = 0.0;
@@ -45,6 +47,54 @@ pub mod heights {
     pub const TEXT_HEIGHT: f32 = 2.4;
     pub const TEXT_Z_BOTTOM: f32 = 0.0;
     pub const TEXT_Z_TOP: f32 = BASE_Z_TOP + TEXT_HEIGHT;
+}
+
+/// Dynamic height calculation based on which features are enabled
+#[derive(Debug, Clone, Copy)]
+pub struct FeatureHeights {
+    pub base_height: f32,
+    pub water_enabled: bool,
+    pub parks_enabled: bool,
+    pub water_z_top: f32,
+    pub park_z_top: f32,
+    pub road_z_top: f32,
+    pub text_z_top: f32,
+}
+
+impl FeatureHeights {
+    pub fn new(base_height: f32, water_enabled: bool, parks_enabled: bool) -> Self {
+        let mut current_z = base_height;
+
+        let water_z_top = if water_enabled {
+            current_z += heights::FEATURE_INCREMENT;
+            current_z
+        } else {
+            0.0
+        };
+
+        let park_z_top = if parks_enabled {
+            current_z += heights::FEATURE_INCREMENT;
+            current_z
+        } else {
+            0.0
+        };
+
+        current_z += heights::FEATURE_INCREMENT;
+        let road_z_top = current_z;
+
+        current_z += heights::FEATURE_INCREMENT;
+        let text_z_top = current_z;
+
+        Self {
+            base_height,
+            water_enabled,
+            parks_enabled,
+            water_z_top,
+            park_z_top,
+            road_z_top,
+            text_z_top,
+        }
+    }
 }
 
 fn default_radius() -> u32 {
