@@ -1,7 +1,7 @@
 use crate::config::heights::{ROAD_Z_BOTTOM, ROAD_Z_TOP};
 use crate::domain::{RoadClass, RoadSegment};
-use crate::geometry::{simplify_polyline, Projector, Scaler};
-use crate::mesh::{extrude_ribbon_ex, Triangle};
+use crate::geometry::{Projector, Scaler, simplify_polyline};
+use crate::mesh::{Triangle, extrude_ribbon_ex};
 
 #[derive(Debug, Clone)]
 pub struct RoadConfig {
@@ -18,10 +18,10 @@ pub struct RoadConfig {
 impl Default for RoadConfig {
     fn default() -> Self {
         Self {
-            motorway_width: 3.0,
-            primary_width: 2.5,
-            secondary_width: 2.0,
-            tertiary_width: 1.5,
+            motorway_width: 1.5,
+            primary_width: 1.5,
+            secondary_width: 1.0,
+            tertiary_width: 0.5,
             residential_width: 0.8,
             width_scale: 1.0,
             min_width_mm: 0.6,

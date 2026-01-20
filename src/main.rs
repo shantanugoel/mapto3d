@@ -80,7 +80,7 @@ struct Args {
     #[arg(long, default_value = "2.0")]
     base_height: f32,
 
-    /// Road height multiplier
+    /// Road width multiplier
     #[arg(long, default_value = "1.0")]
     road_scale: f32,
 
@@ -453,7 +453,10 @@ fn print_color_change_guide(base_height: f32) {
         TEXT_Z_TOP, text_top_layers
     );
     println!();
-    println!("Total height: {:.1}mm = {} layers", TEXT_Z_TOP, text_top_layers);
+    println!(
+        "Total height: {:.1}mm = {} layers",
+        TEXT_Z_TOP, text_top_layers
+    );
     println!();
     println!("Color change schedule (based on absolute feature heights):");
     println!("  Layers 1-{}: Base only (Color 1)", base_layers);
