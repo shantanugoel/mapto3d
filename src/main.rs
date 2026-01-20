@@ -20,7 +20,7 @@ use layers::{
     RoadConfig, TextRenderer, generate_base_plate, generate_park_meshes, generate_road_meshes,
     generate_water_meshes,
 };
-use mesh::{stl::estimate_stl_size, validate_and_fix, write_stl};
+use mesh::{Triangle, stl::estimate_stl_size, validate_and_fix, write_stl};
 use osm::{parse_parks, parse_roads, parse_water};
 
 /// Generate 3D-printable STL city maps from OpenStreetMap data
@@ -322,37 +322,34 @@ fn main() -> Result<()> {
     let bounds = Bounds::from_points(&all_projected_points)
         .context("Failed to compute bounds from road points")?;
 
-    let scaler = Scaler::from_bounds(&bounds, size as f64);
+    let text_margin_mm = 20.0;
+    let scaler = Scaler::from_bounds_with_margin(&bounds, size as f64, text_margin_mm);
     spinner.finish_with_message(format!(
-        "Map area: {:.0}m x {:.0}m -> {:.0}mm x {:.0}mm",
+        "Map area: {:.0}m x {:.0}m -> {:.0}mm x {:.0}mm (with {:.0}mm text margin)",
         bounds.width(),
         bounds.height(),
         size,
-        size
+        size - text_margin_mm as f32,
+        text_margin_mm
     ));
 
     let spinner = create_spinner("Generating mesh layers...");
     let start = Instant::now();
 
-    let mut all_triangles = Vec::new();
-
     let base_triangles = generate_base_plate(size, base_height);
     if verbose {
         println!("  Base plate: {} triangles", base_triangles.len());
     }
-    all_triangles.extend(base_triangles);
 
     let water_triangles = generate_water_meshes(&water, &projector, &scaler);
     if verbose {
         println!("  Water: {} triangles", water_triangles.len());
     }
-    all_triangles.extend(water_triangles);
 
     let park_triangles = generate_park_meshes(&parks, &projector, &scaler);
     if verbose {
         println!("  Parks: {} triangles", park_triangles.len());
     }
-    all_triangles.extend(park_triangles);
 
     let road_config = RoadConfig::default()
         .with_scale(road_scale)
@@ -362,7 +359,6 @@ fn main() -> Result<()> {
     if verbose {
         println!("  Roads: {} triangles", road_triangles.len());
     }
-    all_triangles.extend(road_triangles);
 
     let text_triangles = generate_text_layer(
         &display_name,
@@ -375,43 +371,60 @@ fn main() -> Result<()> {
     if verbose {
         println!("  Text: {} triangles", text_triangles.len());
     }
-    all_triangles.extend(text_triangles);
+
+    let total_triangles = base_triangles.len()
+        + water_triangles.len()
+        + park_triangles.len()
+        + road_triangles.len()
+        + text_triangles.len();
 
     spinner.finish_with_message(format!(
         "Generated {} triangles [{:.1}s]",
-        all_triangles.len(),
+        total_triangles,
         start.elapsed().as_secs_f32()
     ));
 
-    let spinner = create_spinner("Validating and cleaning mesh...");
+    let spinner = create_spinner("Validating and writing STL files...");
     let start = Instant::now();
-    let original_count = all_triangles.len();
-    let (all_triangles, validation_report) = validate_and_fix(all_triangles);
-    let removed = original_count - all_triangles.len();
-    if removed > 0 || verbose {
-        spinner.finish_with_message(format!(
-            "Validated: {} triangles, {} degenerate removed, {} normals fixed [{:.1}s]",
-            all_triangles.len(),
-            removed,
-            validation_report.invalid_normal,
-            start.elapsed().as_secs_f32()
-        ));
-    } else {
-        spinner.finish_with_message(format!(
-            "Mesh valid: {} triangles [{:.1}s]",
-            all_triangles.len(),
-            start.elapsed().as_secs_f32()
-        ));
+
+    let base_stem = output_path.file_stem().unwrap_or_default().to_string_lossy();
+    let parent = output_path.parent().unwrap_or(std::path::Path::new("."));
+
+    let layers: Vec<(&str, Vec<Triangle>)> = vec![
+        ("base", base_triangles),
+        ("water", water_triangles),
+        ("parks", park_triangles),
+        ("roads", road_triangles),
+        ("text", text_triangles),
+    ];
+
+    let mut total_written = 0usize;
+    let mut total_file_size = 0usize;
+    let mut written_files = Vec::new();
+
+    for (name, triangles) in layers {
+        if triangles.is_empty() {
+            continue;
+        }
+
+        let (validated, _) = validate_and_fix(triangles);
+        if validated.is_empty() {
+            continue;
+        }
+
+        let file_path = parent.join(format!("{}_{}.stl", base_stem, name));
+        write_stl(&file_path, &validated).context(format!("Failed to write {} STL", name))?;
+
+        total_written += validated.len();
+        total_file_size += estimate_stl_size(validated.len());
+        written_files.push((name.to_string(), validated.len(), file_path));
     }
 
-    let spinner = create_spinner("Writing STL file...");
-    let start = Instant::now();
-    write_stl(&output_path, &all_triangles).context("Failed to write STL file")?;
-    let file_size = estimate_stl_size(all_triangles.len());
     spinner.finish_with_message(format!(
-        "Wrote {} ({:.1} KB) [{:.1}s]",
-        output_path.display(),
-        file_size as f64 / 1024.0,
+        "Wrote {} files, {} triangles total ({:.1} KB) [{:.1}s]",
+        written_files.len(),
+        total_written,
+        total_file_size as f64 / 1024.0,
         start.elapsed().as_secs_f32()
     ));
 
@@ -421,98 +434,91 @@ fn main() -> Result<()> {
         total_start.elapsed().as_secs_f32()
     );
     println!();
-    println!("Output: {}", output_path.display());
-    println!("  Triangles: {}", all_triangles.len());
-    println!("  File size: {:.1} KB", file_size as f64 / 1024.0);
+    println!("Output files (separate layers for easy slicer selection):");
+    for (name, count, path) in &written_files {
+        println!(
+            "  {}: {} ({} triangles)",
+            name,
+            path.display(),
+            count
+        );
+    }
     println!();
-    println!("Open in a 3D slicer to verify and print!");
+    println!("Import all files into your slicer as separate objects.");
+    println!("This allows easy selection and color assignment per feature.");
     println!();
     print_color_change_guide(base_height);
 
     Ok(())
 }
 
-/// Print color change guide for multi-color FDM printing at 0.2mm layer height
 fn print_color_change_guide(base_height: f32) {
-    const LAYER_HEIGHT: f32 = 0.2;
+    use mapto3d::config::heights::*;
 
     let base_layers = (base_height / LAYER_HEIGHT).round() as i32;
-    let water_bottom_layer = base_layers - 3; // Water is 0.6mm deep (3 layers)
-    let base_top_layer = base_layers;
-    let parks_top_layer = base_layers + 3; // Parks are 0.6mm above base (3 layers)
-    let roads_top_layer = base_layers + 8; // Roads go up to 1.6mm (8 layers)
-    let text_top_layer = base_layers + 10; // Text is 2.0mm tall (10 layers)
+    let water_top_layers = (WATER_Z_TOP / LAYER_HEIGHT).round() as i32;
+    let parks_top_layers = (PARK_Z_TOP / LAYER_HEIGHT).round() as i32;
+    let roads_top_layers = (ROAD_Z_TOP / LAYER_HEIGHT).round() as i32;
+    let text_top_layers = (TEXT_Z_TOP / LAYER_HEIGHT).round() as i32;
 
-    println!("5-Color FDM Printing Guide (0.2mm layer height)");
-    println!("================================================");
+    println!("Multi-Color FDM Printing Guide (0.2mm layer height)");
+    println!("====================================================");
     println!();
-    println!("Feature heights (from base top = 0):");
-    println!("  Water:   -0.6mm (recessed 3 layers into base)");
-    println!("  Parks:   +0.6mm (3 layers above base)");
-    println!("  Roads:   +0.6mm to +1.6mm (3-8 layers, varies by road class)");
-    println!("  Text:    +2.0mm (10 layers - tallest feature)");
-    println!();
-    println!("Layer numbers (from print bed, base = {}mm):", base_height);
-    println!("  Layer 1:        0.0mm (print bed)");
+    println!("Solid column architecture - all features start at z=0, differ in height:");
     println!(
-        "  Layer {}:        {:.1}mm (water starts here)",
-        water_bottom_layer,
-        (water_bottom_layer as f32) * LAYER_HEIGHT
+        "  Base:    0.0mm -> {:.1}mm ({} layers)",
+        base_height, base_layers
     );
     println!(
-        "  Layer {}:       {:.1}mm (base top / water top)",
-        base_top_layer, base_height
+        "  Water:   0.0mm -> {:.1}mm ({} layers)",
+        WATER_Z_TOP, water_top_layers
     );
     println!(
-        "  Layer {}:       {:.1}mm (parks top)",
-        parks_top_layer,
-        base_height + 0.6
+        "  Parks:   0.0mm -> {:.1}mm ({} layers)",
+        PARK_Z_TOP, parks_top_layers
     );
     println!(
-        "  Layer {}:       {:.1}mm (roads top)",
-        roads_top_layer,
-        base_height + 1.6
+        "  Roads:   0.0mm -> {:.1}mm ({} layers)",
+        ROAD_Z_TOP, roads_top_layers
     );
     println!(
-        "  Layer {}:       {:.1}mm (text top)",
-        text_top_layer,
-        base_height + 2.0
+        "  Text:    0.0mm -> {:.1}mm ({} layers - tallest)",
+        TEXT_Z_TOP, text_top_layers
     );
     println!();
-    println!("Color change schedule:");
+    println!("Total height: {:.1}mm = {} layers", TEXT_Z_TOP, text_top_layers);
+    println!();
+    println!("Color change schedule (based on absolute feature heights):");
+    println!("  Layers 1-{}: Base only (Color 1)", base_layers);
     println!(
-        "  Color 1 (Base):   Start -> layer {} ({:.1}mm)",
-        water_bottom_layer - 1,
-        ((water_bottom_layer - 1) as f32) * LAYER_HEIGHT
+        "  Layers {}-{}: Water tops out at {:.1}mm (Color 2 for water areas)",
+        base_layers + 1,
+        water_top_layers,
+        WATER_Z_TOP
     );
     println!(
-        "  Color 2 (Water):  Layer {} -> {} ({:.1}mm -> {:.1}mm)",
-        water_bottom_layer,
-        base_top_layer,
-        (water_bottom_layer as f32) * LAYER_HEIGHT,
-        base_height
+        "  Layers {}-{}: Parks top out at {:.1}mm (Color 3 for park areas)",
+        water_top_layers + 1,
+        parks_top_layers,
+        PARK_Z_TOP
     );
     println!(
-        "  Color 3 (Parks):  Layer {} -> {} ({:.1}mm -> {:.1}mm)",
-        base_top_layer + 1,
-        parks_top_layer,
-        base_height + LAYER_HEIGHT,
-        base_height + 0.6
+        "  Layers {}-{}: Roads top out at {:.1}mm (Color 4 for road areas)",
+        parks_top_layers + 1,
+        roads_top_layers,
+        ROAD_Z_TOP
     );
     println!(
-        "  Color 4 (Roads):  Layer {} -> {} ({:.1}mm -> {:.1}mm)",
-        parks_top_layer + 1,
-        roads_top_layer,
-        base_height + 0.6 + LAYER_HEIGHT,
-        base_height + 1.6
+        "  Layers {}-{}: Text tops out at {:.1}mm (Color 5 for text)",
+        roads_top_layers + 1,
+        text_top_layers,
+        TEXT_Z_TOP
     );
-    println!(
-        "  Color 5 (Text):   Layer {} -> {} ({:.1}mm -> {:.1}mm)",
-        roads_top_layer + 1,
-        text_top_layer,
-        base_height + 1.6 + LAYER_HEIGHT,
-        base_height + 2.0
-    );
+    println!();
+    println!("NOTE: With solid columns, features overlap in XY space.");
+    println!("The slicer will show mixed colors on layers where features coexist.");
+    println!("For clean color separation, use a multi-material slicer like PrusaSlicer");
+    println!("with separate STL files per feature, or accept blended colors.");
     println!();
     println!("Color palette suggestions:");
     println!("  Classic:    White base, Blue water, Green parks, Gray roads, Black text");
@@ -523,14 +529,6 @@ fn print_color_change_guide(base_height: f32) {
     println!("  Night:      Black base, Navy water, Dark green parks, White roads, Gold text");
     println!("  Vintage:    Cream base, Teal water, Olive parks, Burgundy roads, Brown text");
     println!("  Ocean:      Sand base, Cyan water, Sage parks, Coral roads, White text");
-    println!();
-    println!(
-        "Tip: In your slicer, add filament change (M600) at layers {}, {}, {}, {}",
-        water_bottom_layer,
-        base_top_layer + 1,
-        parks_top_layer + 1,
-        roads_top_layer + 1
-    );
 }
 
 fn generate_text_layer(
@@ -543,7 +541,7 @@ fn generate_text_layer(
 ) -> Vec<mesh::Triangle> {
     let mut triangles = Vec::new();
 
-    let text_z = 0.0;
+    let text_z = mapto3d::config::heights::TEXT_Z_BOTTOM;
     let renderer = TextRenderer::new(font_path);
 
     let primary = primary_text

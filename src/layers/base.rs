@@ -1,9 +1,6 @@
 use crate::mesh::Triangle;
 
-/// Generate a base plate mesh (rectangular box)
-///
-/// The base plate sits below the map (z = -thickness to 0)
-/// and provides a solid foundation for 3D printing
+/// Generate a base plate mesh (rectangular box from z=0 to z=thickness)
 pub fn generate_base_plate(size_mm: f32, thickness: f32) -> Vec<Triangle> {
     let mut triangles = Vec::new();
 
@@ -11,8 +8,8 @@ pub fn generate_base_plate(size_mm: f32, thickness: f32) -> Vec<Triangle> {
     let x_max = size_mm;
     let y_min = 0.0;
     let y_max = size_mm;
-    let z_bottom = -thickness;
-    let z_top = 0.0;
+    let z_bottom = 0.0;
+    let z_top = thickness;
 
     // Bottom face (z = -thickness, normal pointing down)
     triangles.push(Triangle::new(

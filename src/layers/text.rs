@@ -1,8 +1,8 @@
+use crate::config::heights::TEXT_HEIGHT;
 use crate::mesh::{Triangle, extrude_ribbon_ex};
 
 use std::path::Path;
 
-const TEXT_EXTRUDE_HEIGHT: f32 = 2.0; // 10 layers at 0.2mm for 5th color
 const CURVE_SUBDIVISIONS: u8 = 20;
 
 pub struct TtfTextRenderer {
@@ -21,7 +21,7 @@ impl TtfTextRenderer {
 
         Some(Self {
             font_data,
-            extrude_height: TEXT_EXTRUDE_HEIGHT,
+            extrude_height: TEXT_HEIGHT,
         })
     }
 
@@ -73,6 +73,7 @@ impl TtfTextRenderer {
             if let Ok(mesh) =
                 fontmesh::char_to_mesh_3d(&face, ch, self.extrude_height, CURVE_SUBDIVISIONS)
             {
+                let z_offset = self.extrude_height / 2.0;
                 for tri_indices in mesh.indices.chunks(3) {
                     if tri_indices.len() < 3 {
                         continue;
@@ -93,9 +94,21 @@ impl TtfTextRenderer {
                     let v2 = mesh.vertices[i2];
 
                     let tri = Triangle::new(
-                        [cursor_x + v0[0] * scale, y + v0[1] * scale, z + v0[2]],
-                        [cursor_x + v1[0] * scale, y + v1[1] * scale, z + v1[2]],
-                        [cursor_x + v2[0] * scale, y + v2[1] * scale, z + v2[2]],
+                        [
+                            cursor_x + v0[0] * scale,
+                            y + v0[1] * scale,
+                            z + v0[2] + z_offset,
+                        ],
+                        [
+                            cursor_x + v1[0] * scale,
+                            y + v1[1] * scale,
+                            z + v1[2] + z_offset,
+                        ],
+                        [
+                            cursor_x + v2[0] * scale,
+                            y + v2[1] * scale,
+                            z + v2[2] + z_offset,
+                        ],
                     );
                     triangles.push(tri);
                 }
@@ -153,7 +166,7 @@ impl Default for StrokeTextRenderer {
             char_height: 7.0,
             char_spacing: 1.5,
             stroke_width: 0.8,
-            extrude_height: TEXT_EXTRUDE_HEIGHT,
+            extrude_height: TEXT_HEIGHT,
         }
     }
 }
@@ -272,13 +285,7 @@ impl TextRenderer {
         }
     }
 
-    pub fn text_width(&self, text: &str, scale: f32) -> f32 {
-        match self {
-            Self::Ttf(ttf) => ttf.text_width(text, scale),
-            Self::Stroke(stroke) => stroke.clone().with_scale(scale).text_width(text),
-        }
-    }
-
+    #[cfg(test)]
     pub fn is_ttf(&self) -> bool {
         matches!(self, Self::Ttf(_))
     }

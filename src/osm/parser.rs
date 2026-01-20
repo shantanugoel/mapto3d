@@ -9,7 +9,6 @@ use std::collections::HashMap;
 /// 2. For each way element with highway tag:
 ///    - Resolve node refs to coordinates
 ///    - Classify road type from highway tag
-///    - Extract layer tag (default 0)
 pub fn parse_roads(response: &OverpassResponse) -> Vec<RoadSegment> {
     // Step 1: Build node lookup map
     let nodes: HashMap<u64, (f64, f64)> = response
@@ -48,9 +47,6 @@ pub fn parse_roads(response: &OverpassResponse) -> Vec<RoadSegment> {
             None => continue, // Skip unknown road types
         };
 
-        // Get layer (for bridges/tunnels)
-        let layer: i8 = tags.get("layer").and_then(|l| l.parse().ok()).unwrap_or(0);
-
         // Resolve node refs to coordinates
         let node_refs = match &element.nodes {
             Some(n) => n,
@@ -67,7 +63,7 @@ pub fn parse_roads(response: &OverpassResponse) -> Vec<RoadSegment> {
             continue;
         }
 
-        roads.push(RoadSegment::new(points, class, layer));
+        roads.push(RoadSegment::new(points, class));
     }
 
     roads

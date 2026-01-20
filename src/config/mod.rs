@@ -3,6 +3,50 @@ use std::path::PathBuf;
 
 use crate::api::RoadDepth;
 
+/// Central height constants for 3D printing layer alignment.
+/// All heights in mm, aligned to 0.2mm layer height for FDM printing.
+///
+/// SOLID COLUMN ARCHITECTURE: Each feature is a solid extrusion from z=0 up to
+/// its designated height. This ensures no floating geometry - higher features
+/// physically overlap lower ones in XY space but are taller, creating solid
+/// columns that the slicer handles correctly for multi-color printing.
+///
+/// All features use absolute Z coordinates from print bed (z=0):
+///   Base:  0.0 -> 2.0mm  (10 layers) - foundation
+///   Water: 0.0 -> 2.6mm  (13 layers) - 0.6mm above base top
+///   Parks: 0.0 -> 3.2mm  (16 layers) - 1.2mm above base top
+///   Roads: 0.0 -> 3.8mm  (19 layers) - 1.8mm above base top
+///   Text:  0.0 -> 4.4mm  (22 layers) - 2.4mm above base top (tallest)
+#[allow(dead_code)]
+pub mod heights {
+    pub const LAYER_HEIGHT: f32 = 0.2;
+
+    // Base plate (default 2mm thick)
+    pub const BASE_Z_BOTTOM: f32 = 0.0;
+    pub const BASE_HEIGHT: f32 = 2.0;
+    pub const BASE_Z_TOP: f32 = BASE_HEIGHT;
+
+    // Water: 0.6mm above base top = 2.6mm absolute
+    pub const WATER_HEIGHT: f32 = 0.6;
+    pub const WATER_Z_BOTTOM: f32 = 0.0;
+    pub const WATER_Z_TOP: f32 = BASE_Z_TOP + WATER_HEIGHT;
+
+    // Parks: 1.2mm above base top = 3.2mm absolute
+    pub const PARK_HEIGHT: f32 = 1.2;
+    pub const PARK_Z_BOTTOM: f32 = 0.0;
+    pub const PARK_Z_TOP: f32 = BASE_Z_TOP + PARK_HEIGHT;
+
+    // Roads: 1.8mm above base top = 3.8mm absolute
+    pub const ROAD_HEIGHT: f32 = 1.8;
+    pub const ROAD_Z_BOTTOM: f32 = 0.0;
+    pub const ROAD_Z_TOP: f32 = BASE_Z_TOP + ROAD_HEIGHT;
+
+    // Text: 2.4mm above base top = 4.4mm absolute (tallest feature)
+    pub const TEXT_HEIGHT: f32 = 2.4;
+    pub const TEXT_Z_BOTTOM: f32 = 0.0;
+    pub const TEXT_Z_TOP: f32 = BASE_Z_TOP + TEXT_HEIGHT;
+}
+
 fn default_radius() -> u32 {
     10000
 }

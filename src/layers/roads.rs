@@ -1,64 +1,57 @@
+use crate::config::heights::{ROAD_Z_BOTTOM, ROAD_Z_TOP};
 use crate::domain::{RoadClass, RoadSegment};
-use crate::geometry::{Projector, Scaler, simplify_polyline};
-use crate::mesh::{Triangle, extrude_ribbon_ex};
+use crate::geometry::{simplify_polyline, Projector, Scaler};
+use crate::mesh::{extrude_ribbon_ex, Triangle};
 
 #[derive(Debug, Clone)]
 pub struct RoadConfig {
-    pub motorway: (f32, f32),
-    pub primary: (f32, f32),
-    pub secondary: (f32, f32),
-    pub tertiary: (f32, f32),
-    pub residential: (f32, f32),
-    pub road_scale: f32,
-    pub map_scale_factor: f32,
+    pub motorway_width: f32,
+    pub primary_width: f32,
+    pub secondary_width: f32,
+    pub tertiary_width: f32,
+    pub residential_width: f32,
+    pub width_scale: f32,
     pub min_width_mm: f32,
-    pub min_height_mm: f32,
     pub simplify_level: u8,
 }
 
 impl Default for RoadConfig {
     fn default() -> Self {
         Self {
-            // (width_mm, height_mm) - heights aligned to 0.2mm layer height, min 3 layers
-            motorway: (3.0, 1.6),    // 8 layers
-            primary: (2.5, 1.2),     // 6 layers
-            secondary: (2.0, 0.8),   // 4 layers
-            tertiary: (1.5, 0.6),    // 3 layers
-            residential: (0.8, 0.6), // 3 layers (minimum)
-            road_scale: 1.0,
-            map_scale_factor: 1.0,
+            motorway_width: 3.0,
+            primary_width: 2.5,
+            secondary_width: 2.0,
+            tertiary_width: 1.5,
+            residential_width: 0.8,
+            width_scale: 1.0,
             min_width_mm: 0.6,
-            min_height_mm: 0.6, // 3 layers minimum for solid color
             simplify_level: 0,
         }
     }
 }
 
 impl RoadConfig {
-    pub fn get_dimensions(&self, class: RoadClass) -> (f32, f32) {
-        let (base_w, base_h) = match class {
-            RoadClass::Motorway => self.motorway,
-            RoadClass::Primary => self.primary,
-            RoadClass::Secondary => self.secondary,
-            RoadClass::Tertiary => self.tertiary,
-            RoadClass::Residential => self.residential,
+    pub fn get_width(&self, class: RoadClass) -> f32 {
+        let base_w = match class {
+            RoadClass::Motorway => self.motorway_width,
+            RoadClass::Primary => self.primary_width,
+            RoadClass::Secondary => self.secondary_width,
+            RoadClass::Tertiary => self.tertiary_width,
+            RoadClass::Residential => self.residential_width,
         };
 
-        let scaled_w = (base_w * self.map_scale_factor).max(self.min_width_mm);
-        let scaled_h = (base_h * self.road_scale * self.map_scale_factor).max(self.min_height_mm);
-
-        (scaled_w, scaled_h)
+        (base_w * self.width_scale).max(self.min_width_mm)
     }
 
     pub fn with_scale(mut self, scale: f32) -> Self {
-        self.road_scale = scale;
+        self.width_scale = scale;
         self
     }
 
     pub fn with_map_radius(mut self, radius_m: u32, physical_size_mm: f32) -> Self {
         let radius_km = radius_m as f32 / 1000.0;
 
-        self.map_scale_factor = if radius_km < 5.0 {
+        let map_scale_factor = if radius_km < 5.0 {
             1.0
         } else if radius_km < 10.0 {
             1.0 + (radius_km - 5.0) * 0.1
@@ -69,10 +62,9 @@ impl RoadConfig {
         };
 
         let mm_per_km = physical_size_mm / (radius_km * 2.0);
-        if mm_per_km < 5.0 {
-            self.map_scale_factor *= 1.5;
-        }
+        let density_factor = if mm_per_km < 5.0 { 1.5 } else { 1.0 };
 
+        self.width_scale *= map_scale_factor * density_factor;
         self
     }
 
@@ -144,27 +136,10 @@ pub fn generate_road_meshes(
 
         let scaled: Vec<(f32, f32)> = projected.iter().map(|&(x, y)| scaler.scale(x, y)).collect();
 
-        let (width, height) = config.get_dimensions(road.class);
+        let width = config.get_width(road.class);
+        let road_height = ROAD_Z_TOP - ROAD_Z_BOTTOM;
 
-        let osm_layer = road.layer;
-        let (actual_base_z, actual_height, include_bottom) = if osm_layer > 0 {
-            let elevated_z = osm_layer as f32 * 0.5;
-            (0.0, elevated_z + height, true)
-        } else if osm_layer < 0 {
-            let tunnel_depth = (-osm_layer) as f32 * 0.5;
-            (-tunnel_depth, tunnel_depth + height, true)
-        } else {
-            (0.0, height, false)
-        };
-
-        let triangles = extrude_ribbon_ex(
-            &scaled,
-            width,
-            actual_height,
-            actual_base_z,
-            include_bottom,
-            true,
-        );
+        let triangles = extrude_ribbon_ex(&scaled, width, road_height, ROAD_Z_BOTTOM, true, true);
         all_triangles.extend(triangles);
     }
 
@@ -176,37 +151,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_road_config_dimensions() {
+    fn test_road_config_width() {
         let config = RoadConfig::default();
-        let (w, h) = config.get_dimensions(RoadClass::Motorway);
+        let w = config.get_width(RoadClass::Motorway);
         assert_eq!(w, 3.0);
-        assert_eq!(h, 1.6);
     }
 
     #[test]
     fn test_road_config_scale() {
         let config = RoadConfig::default().with_scale(1.5);
-        let (_, h) = config.get_dimensions(RoadClass::Motorway);
-        assert_eq!(h, 2.4);
+        let w = config.get_width(RoadClass::Motorway);
+        assert_eq!(w, 4.5);
     }
 
     #[test]
     fn test_road_config_map_radius_small() {
         let config = RoadConfig::default().with_map_radius(3000, 220.0);
-        assert!((config.map_scale_factor - 1.0).abs() < 0.01);
+        assert!((config.width_scale - 1.0).abs() < 0.01);
     }
 
     #[test]
     fn test_road_config_map_radius_large() {
         let config = RoadConfig::default().with_map_radius(15000, 220.0);
-        assert!(config.map_scale_factor > 1.5);
+        assert!(config.width_scale > 1.5);
     }
 
     #[test]
     fn test_road_config_min_width() {
         let config = RoadConfig::default();
-        let (w, h) = config.get_dimensions(RoadClass::Residential);
+        let w = config.get_width(RoadClass::Residential);
         assert!(w >= 0.6);
-        assert!(h >= 0.6);
     }
 }

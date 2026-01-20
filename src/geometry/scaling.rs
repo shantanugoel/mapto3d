@@ -73,24 +73,31 @@ impl Scaler {
     /// # Arguments
     /// * `bounds` - Bounding box in meters
     /// * `target_mm` - Target size in mm (will fit the larger dimension)
+    #[allow(dead_code)]
     pub fn from_bounds(bounds: &Bounds, target_mm: f64) -> Self {
+        Self::from_bounds_with_margin(bounds, target_mm, 0.0)
+    }
+
+    /// Create a scaler with a bottom margin reserved for text labels
+    pub fn from_bounds_with_margin(bounds: &Bounds, target_mm: f64, bottom_margin_mm: f64) -> Self {
         let width = bounds.width();
         let height = bounds.height();
+
+        let usable_height = target_mm - bottom_margin_mm;
         let max_dim = width.max(height);
 
-        // Scale factor: mm per meter
         let scale = if max_dim > 0.0 {
-            target_mm / max_dim
+            usable_height / max_dim
         } else {
             1.0
         };
 
-        // Center the map in the target area
         let scaled_width = width * scale;
         let scaled_height = height * scale;
 
         let offset_x = (target_mm - scaled_width) / 2.0 - bounds.min_x * scale;
-        let offset_y = (target_mm - scaled_height) / 2.0 - bounds.min_y * scale;
+        let offset_y =
+            bottom_margin_mm + (usable_height - scaled_height) / 2.0 - bounds.min_y * scale;
 
         Self {
             scale,

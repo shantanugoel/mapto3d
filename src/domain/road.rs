@@ -31,17 +31,11 @@ pub struct RoadSegment {
     pub points: Vec<(f64, f64)>,
     /// Road classification
     pub class: RoadClass,
-    /// Layer for bridges/tunnels (-1 = tunnel, 0 = ground, 1+ = bridge)
-    pub layer: i8,
 }
 
 impl RoadSegment {
-    pub fn new(points: Vec<(f64, f64)>, class: RoadClass, layer: i8) -> Self {
-        Self {
-            points,
-            class,
-            layer,
-        }
+    pub fn new(points: Vec<(f64, f64)>, class: RoadClass) -> Self {
+        Self { points, class }
     }
 }
 

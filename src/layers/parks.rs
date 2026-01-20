@@ -1,11 +1,7 @@
+use crate::config::heights::{PARK_Z_BOTTOM, PARK_Z_TOP};
 use crate::domain::ParkPolygon;
 use crate::geometry::{Projector, Scaler};
 use crate::mesh::{Triangle, extrude_polygon_ex};
-
-/// Parks are slightly raised above the base plate.
-/// Height of 0.6mm = 3 layers at 0.2mm layer height for solid color.
-const PARK_Z_BOTTOM: f32 = 0.0;
-const PARK_Z_TOP: f32 = 0.6;
 
 pub fn generate_park_meshes(
     park_polygons: &[ParkPolygon],
@@ -27,7 +23,7 @@ pub fn generate_park_meshes(
 
         let scaled: Vec<(f32, f32)> = projected.iter().map(|&(x, y)| scaler.scale(x, y)).collect();
 
-        let triangles = extrude_polygon_ex(&scaled, &[], PARK_Z_BOTTOM, PARK_Z_TOP, false);
+        let triangles = extrude_polygon_ex(&scaled, &[], PARK_Z_BOTTOM, PARK_Z_TOP, true);
         all_triangles.extend(triangles);
     }
 
