@@ -60,7 +60,7 @@ struct Args {
     lat: Option<f64>,
 
     /// Longitude for direct coordinate input (use with --lat)
-    #[arg(long, requires = "lat")]
+    #[arg(long, requires = "lat", allow_hyphen_values = true)]
     lon: Option<f64>,
 
     /// Map radius in meters
@@ -238,8 +238,14 @@ fn main() -> Result<()> {
         println!("  Road scale: {}", road_scale);
         println!("  Road depth: {:?}", road_depth);
         println!("  Simplify level: {}", simplify);
-        println!("  Water features: {}", if args.water { "enabled" } else { "disabled" });
-        println!("  Park features: {}", if args.parks { "enabled" } else { "disabled" });
+        println!(
+            "  Water features: {}",
+            if args.water { "enabled" } else { "disabled" }
+        );
+        println!(
+            "  Park features: {}",
+            if args.parks { "enabled" } else { "disabled" }
+        );
         println!("  Output: {}", output_path.display());
         println!("  Overpass mirrors: {}", overpass_config.urls.len());
         println!();
@@ -363,7 +369,8 @@ fn main() -> Result<()> {
     }
 
     let water_triangles = if args.water {
-        let triangles = generate_water_meshes(&water, &projector, &scaler, feature_heights.water_z_top);
+        let triangles =
+            generate_water_meshes(&water, &projector, &scaler, feature_heights.water_z_top);
         if verbose {
             println!("  Water: {} triangles", triangles.len());
         }
@@ -373,7 +380,8 @@ fn main() -> Result<()> {
     };
 
     let park_triangles = if args.parks {
-        let triangles = generate_park_meshes(&parks, &projector, &scaler, feature_heights.park_z_top);
+        let triangles =
+            generate_park_meshes(&parks, &projector, &scaler, feature_heights.park_z_top);
         if verbose {
             println!("  Parks: {} triangles", triangles.len());
         }
@@ -501,7 +509,10 @@ fn print_color_change_guide(heights: &FeatureHeights) {
     );
     println!();
     println!("Color change schedule (based on absolute feature heights):");
-    println!("  Layers 1-{}: Base only (Color {})", base_layers, color_num);
+    println!(
+        "  Layers 1-{}: Base only (Color {})",
+        base_layers, color_num
+    );
     color_num += 1;
     let mut prev_layers = base_layers;
 
