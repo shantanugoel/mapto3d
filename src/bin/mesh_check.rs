@@ -2,7 +2,7 @@ use anyhow::{Context, Result, bail};
 
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use stl_io::IndexedMesh;
 
@@ -149,7 +149,7 @@ fn analyze_mesh(mesh: &IndexedMesh) -> MeshStats {
     stats
 }
 
-fn print_report(path: &PathBuf, stats: &MeshStats) {
+fn print_report(path: &Path, stats: &MeshStats) {
     println!("Mesh analysis for {}", path.display());
     println!("  vertices: {}", stats.vertices);
     println!("  faces: {}", stats.faces);

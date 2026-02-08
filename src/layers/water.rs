@@ -1,6 +1,6 @@
 use crate::domain::WaterPolygon;
 use crate::geometry::{Projector, Scaler};
-use crate::mesh::{extrude_polygon, Triangle};
+use crate::mesh::{Triangle, extrude_polygon};
 
 pub fn generate_water_meshes(
     water_polygons: &[WaterPolygon],

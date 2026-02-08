@@ -78,9 +78,7 @@ impl TtfTextRenderer {
                 continue;
             }
 
-            if let Some(glyph_triangles) =
-                self.render_glyph(&face, ch, cursor_x, y, z, scale, self.extrude_height)
-            {
+            if let Some(glyph_triangles) = self.render_glyph(&face, ch, cursor_x, y, z, scale) {
                 triangles.extend(glyph_triangles);
             }
 
@@ -100,7 +98,6 @@ impl TtfTextRenderer {
         y: f32,
         z: f32,
         scale: f32,
-        depth: f32,
     ) -> Option<Vec<Triangle>> {
         let glyph = fontmesh::Glyph::new(face, ch).ok()?;
         let outline = glyph
@@ -153,7 +150,7 @@ impl TtfTextRenderer {
             return None;
         }
 
-        let z_top = z + depth;
+        let z_top = z + self.extrude_height;
         let mut triangles = Vec::new();
         for polygon in merged.0 {
             let outer = line_string_to_ring(polygon.exterior(), false);
@@ -1032,7 +1029,7 @@ mod tests {
         for ch in text.chars() {
             if ch == 'O'
                 && let Some(glyph_triangles) =
-                    renderer.render_glyph(&face, ch, cursor_x, y, 0.0, scale, text_z_top)
+                    renderer.render_glyph(&face, ch, cursor_x, y, 0.0, scale)
             {
                 let mut min_x = f32::INFINITY;
                 let mut max_x = f32::NEG_INFINITY;

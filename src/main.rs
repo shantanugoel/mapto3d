@@ -23,6 +23,9 @@ use layers::{
 use mesh::{stl::estimate_stl_size, validate_and_fix, write_stl};
 use osm::{parse_parks, parse_roads, parse_water};
 
+type QuantizedVertex = (i64, i64, i64);
+type QuantizedEdge = (QuantizedVertex, QuantizedVertex);
+
 /// Generate 3D-printable STL city maps from OpenStreetMap data
 ///
 /// Examples:
@@ -409,8 +412,7 @@ fn main() -> Result<()> {
         &display_name,
         center,
         size,
-        primary_text.as_deref(),
-        secondary_text.as_deref(),
+        (primary_text.as_deref(), secondary_text.as_deref()),
         font_path.as_deref(),
         feature_heights.text_z_top,
         !args.no_text_fallback,
@@ -601,12 +603,12 @@ fn generate_text_layer(
     city: &str,
     coords: (f64, f64),
     size_mm: f32,
-    primary_text: Option<&str>,
-    secondary_text: Option<&str>,
+    labels: (Option<&str>, Option<&str>),
     font_path: Option<&std::path::Path>,
     text_z_top: f32,
     allow_fallback: bool,
 ) -> Vec<mesh::Triangle> {
+    let (primary_text, secondary_text) = labels;
     let text_z = 0.0;
     let renderer = TextRenderer::new(font_path, text_z_top);
     let mut triangles = render_text_triangles(
@@ -693,7 +695,7 @@ fn render_text_triangles(
 }
 
 fn edge_topology_counts(triangles: &[mesh::Triangle]) -> (usize, usize) {
-    let mut counts: HashMap<((i64, i64, i64), (i64, i64, i64)), usize> = HashMap::new();
+    let mut counts: HashMap<QuantizedEdge, usize> = HashMap::new();
 
     for triangle in triangles {
         let vertices = triangle.vertices.map(quantize_vertex);
@@ -708,7 +710,7 @@ fn edge_topology_counts(triangles: &[mesh::Triangle]) -> (usize, usize) {
     (boundary_edges, non_manifold_edges)
 }
 
-fn quantize_vertex(vertex: [f32; 3]) -> (i64, i64, i64) {
+fn quantize_vertex(vertex: [f32; 3]) -> QuantizedVertex {
     const SCALE: f32 = 10_000.0;
     (
         (vertex[0] * SCALE).round() as i64,
@@ -717,7 +719,7 @@ fn quantize_vertex(vertex: [f32; 3]) -> (i64, i64, i64) {
     )
 }
 
-fn ordered_edge(a: (i64, i64, i64), b: (i64, i64, i64)) -> ((i64, i64, i64), (i64, i64, i64)) {
+fn ordered_edge(a: QuantizedVertex, b: QuantizedVertex) -> QuantizedEdge {
     if a <= b { (a, b) } else { (b, a) }
 }
 

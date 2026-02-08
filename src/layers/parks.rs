@@ -1,6 +1,6 @@
 use crate::domain::ParkPolygon;
 use crate::geometry::{Projector, Scaler};
-use crate::mesh::{extrude_polygon_ex, Triangle};
+use crate::mesh::{Triangle, extrude_polygon_ex};
 
 pub fn generate_park_meshes(
     park_polygons: &[ParkPolygon],

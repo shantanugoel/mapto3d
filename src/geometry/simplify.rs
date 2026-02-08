@@ -17,6 +17,7 @@ pub fn simplify_polyline(points: &[(f64, f64)], epsilon: f64) -> Vec<(f64, f64)>
 }
 
 /// Simplify a polyline in projected (x, y) coordinates using Ramer-Douglas-Peucker
+#[allow(dead_code)]
 pub fn simplify_projected(points: &[(f64, f64)], epsilon: f64) -> Vec<(f64, f64)> {
     if points.len() < 3 {
         return points.to_vec();
@@ -32,6 +33,7 @@ pub fn simplify_projected(points: &[(f64, f64)], epsilon: f64) -> Vec<(f64, f64)
     simplified.0.into_iter().map(|c| (c.x, c.y)).collect()
 }
 
+#[allow(dead_code)]
 pub fn filter_short_segments(points: &[(f64, f64)], min_length: f64) -> Vec<(f64, f64)> {
     if points.len() < 2 {
         return points.to_vec();
@@ -59,6 +61,7 @@ pub fn filter_short_segments(points: &[(f64, f64)], min_length: f64) -> Vec<(f64
     result
 }
 
+#[allow(dead_code)]
 pub fn simplify_for_mesh(
     points: &[(f64, f64)],
     epsilon: f64,
@@ -68,6 +71,7 @@ pub fn simplify_for_mesh(
     filter_short_segments(&simplified, min_segment_length)
 }
 
+#[allow(dead_code)]
 pub fn calculate_epsilon_meters(radius_m: u32, simplify_level: u8) -> f64 {
     let base_epsilon = match radius_m {
         0..=3000 => 0.5,
@@ -88,6 +92,7 @@ pub fn calculate_epsilon_meters(radius_m: u32, simplify_level: u8) -> f64 {
     base_epsilon * multiplier
 }
 
+#[allow(dead_code)]
 pub fn calculate_min_segment_length(radius_m: u32) -> f64 {
     match radius_m {
         0..=5000 => 0.5,
