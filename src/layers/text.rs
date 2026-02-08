@@ -1,6 +1,6 @@
 use crate::mesh::{Triangle, extrude_polygon_ex, extrude_ribbon_ex};
 
-use geo::{Contains, CoordsIter, LineString, MultiPolygon, Point, Polygon};
+use geo::{CoordsIter, LineString, MultiPolygon, Polygon};
 use geo_clipper::Clipper;
 
 use std::path::Path;
@@ -116,7 +116,6 @@ impl TtfTextRenderer {
                 let polygon = ring_to_polygon(&points)?;
                 Some(GlyphRing {
                     area_abs: signed_area(&points).abs() as f64,
-                    points,
                     polygon,
                     parent: None,
                     depth: 0,
@@ -206,7 +205,6 @@ impl TtfTextRenderer {
 
 #[derive(Debug, Clone)]
 struct GlyphRing {
-    points: Vec<(f32, f32)>,
     polygon: Polygon<f64>,
     area_abs: f64,
     parent: Option<usize>,
@@ -271,7 +269,6 @@ fn assign_ring_hierarchy(rings: &mut [GlyphRing]) {
     let mut parents = vec![None; ring_count];
 
     for i in 0..ring_count {
-        let probe = Point::new(rings[i].points[0].0 as f64, rings[i].points[0].1 as f64);
         let mut best_parent: Option<(usize, f64)> = None;
 
         for j in 0..ring_count {
@@ -279,7 +276,11 @@ fn assign_ring_hierarchy(rings: &mut [GlyphRing]) {
                 continue;
             }
 
-            if rings[j].polygon.contains(&probe) {
+            if rings[j].area_abs <= rings[i].area_abs {
+                continue;
+            }
+
+            if polygon_fully_contains(&rings[j].polygon, &rings[i].polygon) {
                 match best_parent {
                     Some((_, best_area)) if rings[j].area_abs >= best_area => {}
                     _ => best_parent = Some((j, rings[j].area_abs)),
@@ -310,6 +311,11 @@ fn assign_ring_hierarchy(rings: &mut [GlyphRing]) {
         rings[i].parent = parents[i];
         rings[i].depth = depths[i];
     }
+}
+
+fn polygon_fully_contains(container: &Polygon<f64>, candidate: &Polygon<f64>) -> bool {
+    let residual = candidate.difference(container, CLIPPER_PRECISION_FACTOR);
+    residual.0.is_empty()
 }
 
 fn line_string_to_ring(ring: &LineString<f64>, expect_clockwise: bool) -> Vec<(f32, f32)> {
@@ -980,7 +986,10 @@ mod tests {
         let center = ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
         let mut center_covered_on_top = false;
         for triangle in &triangles {
-            let is_top_face = triangle.vertices.iter().all(|vertex| (vertex[2] - 4.4).abs() < 1e-3);
+            let is_top_face = triangle
+                .vertices
+                .iter()
+                .all(|vertex| (vertex[2] - 4.4).abs() < 1e-3);
             if !is_top_face {
                 continue;
             }
@@ -1055,6 +1064,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_ring_hierarchy_detects_true_containment_only() {
+        let outer = make_glyph_ring(&[(0.0, 0.0), (12.0, 0.0), (12.0, 12.0), (0.0, 12.0)]);
+        let hole = make_glyph_ring(&[(3.0, 3.0), (9.0, 3.0), (9.0, 9.0), (3.0, 9.0)]);
+
+        let mut rings = vec![outer, hole];
+        assign_ring_hierarchy(&mut rings);
+
+        assert_eq!(rings[0].parent, None);
+        assert_eq!(rings[0].depth, 0);
+        assert_eq!(rings[1].parent, Some(0));
+        assert_eq!(rings[1].depth, 1);
+    }
+
+    #[test]
+    fn test_ring_hierarchy_ignores_partial_overlap() {
+        let stem = make_glyph_ring(&[(0.0, 0.0), (2.0, 0.0), (2.0, 8.0), (0.0, 8.0)]);
+        let crossbar = make_glyph_ring(&[(1.0, 3.0), (7.0, 3.0), (7.0, 5.0), (1.0, 5.0)]);
+
+        let mut rings = vec![stem, crossbar];
+        assign_ring_hierarchy(&mut rings);
+
+        assert_eq!(rings[0].parent, None);
+        assert_eq!(rings[1].parent, None);
+        assert_eq!(rings[0].depth, 0);
+        assert_eq!(rings[1].depth, 0);
+    }
+
     fn edge_topology_counts(triangles: &[Triangle]) -> (usize, usize) {
         let mut counts: HashMap<((i64, i64, i64), (i64, i64, i64)), usize> = HashMap::new();
 
@@ -1084,12 +1121,7 @@ mod tests {
         if a <= b { (a, b) } else { (b, a) }
     }
 
-    fn point_in_triangle_2d(
-        p: (f32, f32),
-        a: (f32, f32),
-        b: (f32, f32),
-        c: (f32, f32),
-    ) -> bool {
+    fn point_in_triangle_2d(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> bool {
         fn sign(p1: (f32, f32), p2: (f32, f32), p3: (f32, f32)) -> f32 {
             (p1.0 - p3.0) * (p2.1 - p3.1) - (p2.0 - p3.0) * (p1.1 - p3.1)
         }
@@ -1117,5 +1149,15 @@ mod tests {
             let c = (triangle.vertices[2][0], triangle.vertices[2][1]);
             point_in_triangle_2d(p, a, b, c)
         })
+    }
+
+    fn make_glyph_ring(points: &[(f32, f32)]) -> GlyphRing {
+        let points_vec = points.to_vec();
+        GlyphRing {
+            area_abs: signed_area(&points_vec).abs() as f64,
+            polygon: ring_to_polygon(&points_vec).expect("valid ring"),
+            parent: None,
+            depth: 0,
+        }
     }
 }
