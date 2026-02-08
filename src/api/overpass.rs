@@ -24,11 +24,23 @@ pub struct Element {
     #[serde(default)]
     pub nodes: Option<Vec<u64>>,
     #[serde(default)]
+    pub members: Option<Vec<Member>>,
+    #[serde(default)]
     pub tags: Option<HashMap<String, String>>,
     #[serde(default)]
     pub lat: Option<f64>,
     #[serde(default)]
     pub lon: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Member {
+    #[serde(rename = "type")]
+    pub type_: String,
+    #[serde(rename = "ref")]
+    pub ref_id: u64,
+    #[serde(default)]
+    pub role: String,
 }
 
 fn calculate_bbox(center: (f64, f64), radius_m: u32) -> (f64, f64, f64, f64) {
@@ -154,11 +166,17 @@ pub fn fetch_water_with_cache(
         r#"[out:json][timeout:180];
 (
   way["natural"="water"]({south},{west},{north},{east});
+  relation["natural"="water"]({south},{west},{north},{east});
   way["natural"="coastline"]({south},{west},{north},{east});
+  relation["natural"="coastline"]({south},{west},{north},{east});
   way["waterway"="riverbank"]({south},{west},{north},{east});
+  relation["waterway"="riverbank"]({south},{west},{north},{east});
   way["waterway"="river"]({south},{west},{north},{east});
+  relation["waterway"="river"]({south},{west},{north},{east});
   way["water"]({south},{west},{north},{east});
+  relation["water"]({south},{west},{north},{east});
   way["landuse"="reservoir"]({south},{west},{north},{east});
+  relation["landuse"="reservoir"]({south},{west},{north},{east});
 );
 out body;
 >;
@@ -190,12 +208,19 @@ pub fn fetch_parks_with_cache(
         r#"[out:json][timeout:180];
 (
   way["leisure"="park"]({south},{west},{north},{east});
+  relation["leisure"="park"]({south},{west},{north},{east});
   way["leisure"="garden"]({south},{west},{north},{east});
+  relation["leisure"="garden"]({south},{west},{north},{east});
   way["leisure"="nature_reserve"]({south},{west},{north},{east});
+  relation["leisure"="nature_reserve"]({south},{west},{north},{east});
   way["landuse"="grass"]({south},{west},{north},{east});
+  relation["landuse"="grass"]({south},{west},{north},{east});
   way["landuse"="meadow"]({south},{west},{north},{east});
+  relation["landuse"="meadow"]({south},{west},{north},{east});
   way["landuse"="forest"]({south},{west},{north},{east});
+  relation["landuse"="forest"]({south},{west},{north},{east});
   way["natural"="wood"]({south},{west},{north},{east});
+  relation["natural"="wood"]({south},{west},{north},{east});
 );
 out body;
 >;
