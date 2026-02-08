@@ -1,181 +1,145 @@
-# AGENTS.md - Agentic Coding Guidelines for mapto3d
+# AGENTS.md - mapto3d Agent Guide
 
-> Generate 3D-printable STL city maps from OpenStreetMap data
+Project goal: generate a single, printable, manifold STL city map from OSM data.
 
-**Rust Edition**: 2024 | **MSRV**: 1.92.0+
+This guide is intentionally project-specific. It documents the invariants and workflows that prevent regressions in this codebase.
 
----
+## What "done" means in this repo
 
-## Build/Lint/Test Commands
+A change is complete when all of the following hold:
+
+- STL output remains manifold (no boundary edges, no non-manifold edges).
+- No floating components are introduced.
+- Solid-column layer model is preserved (features extrude from `z=0`).
+- CLI and config behavior remain consistent with `src/main.rs`.
+- Relevant topology regression tests still pass.
+
+## Ground Truth Files
+
+- `src/main.rs`: orchestration, CLI parsing, config merge, text fallback decision, final validation/write.
+- `src/config/mod.rs`: feature height model, config schema/search order, Overpass defaults.
+- `src/api/overpass.rs`: road/water/park queries, retry/backoff, mirror failover.
+- `src/api/nominatim.rs`: city geocoding and required rate-limit delay.
+- `src/osm/parser.rs`: conversion from raw Overpass elements to domain objects.
+- `src/layers/roads.rs`: simplification, buffering, polygon union, road extrusion.
+- `src/layers/text.rs`: TTF and stroke renderers, contour hierarchy, hole handling.
+- `src/mesh/extrusion.rs`: polygon extrusion and side wall winding rules.
+- `src/mesh/validation.rs`: mesh cleanup before STL write.
+- `src/bin/mesh_check.rs`: strict post-generation manifold/floating check.
+
+## End-to-End Pipeline
+
+1. Resolve center via `--lat/--lon` or Nominatim geocoding.
+2. Fetch roads from Overpass (mandatory), optionally water and parks.
+3. Parse OSM nodes/ways into domain structs.
+4. Project WGS84 to local meters (`Projector`), then scale to mm (`Scaler`).
+5. Build layer meshes:
+   - base plate
+   - optional water
+   - optional parks
+   - roads (buffer + union + extrusion)
+   - text (TTF, with optional stroke fallback)
+6. Run `validate_and_fix`.
+7. Write binary STL.
+8. Print layer/color change guidance.
+
+## Critical Geometry Invariants
+
+- Coordinate tuples are `(lat, lon)` until projection.
+- Projected coordinates are meters (`f64`), scaled coordinates are mm (`f32`).
+- All feature geometry is currently extruded from `z=0` to a feature-specific top height.
+- Outer rings must be CCW and holes CW before extrusion.
+- Road intersections rely on polygon union before extrusion; skipping union tends to create non-manifold overlaps.
+- Closed-loop roads should keep interior voids (do not accidentally fill them).
+- TTF glyph holes (for `O`, `0`, etc.) must remain open on top faces.
+
+## Layer Height Model (Dynamic)
+
+`FeatureHeights::new(base_height, water_enabled, parks_enabled)` controls absolute top heights.
+
+- Step increment is `0.6mm`.
+- Water and parks consume increments only if enabled.
+- Roads and text always consume increments.
+
+With default base `2.0mm` and water+parks enabled:
+- water top `2.6`
+- parks top `3.2`
+- roads top `3.8`
+- text top `4.4`
+
+If you change this model, also verify `print_color_change_guide()` in `src/main.rs` stays correct.
+
+## Config/CLI Behavior You Must Preserve
+
+- Auto config search order is implemented in `get_config_paths()`.
+- `--config <path>` is strict: missing file is an error.
+- Merge logic uses sentinel defaults for many numeric args in `src/main.rs`.
+- Passing a value equal to the built-in default may not override config.
+- Config schema currently does not include `water`, `parks`, `font`, or `no_text_fallback`.
+
+## API and Parsing Assumptions
+
+- Overpass requests are POST form data (`data=<query>`), not raw body.
+- Overpass retries only on `429`/`504`, with wait `30 * attempt` seconds.
+- Overpass query timeout in query text is `180`; HTTP client timeout is config-driven (`timeout_secs`, default `200`).
+- Nominatim geocoding sleeps 1 second before request (rate-limit compliance).
+- Water/park parsing currently handles closed `way` geometries; relations/multipolygons are not parsed.
+
+## Text Rendering Contracts
+
+- Renderer selection:
+  - custom font path if valid
+  - default/embedded Roboto Serif
+  - stroke fallback as last resort
+- `generate_text_layer()` computes edge topology counts.
+- If fallback is allowed and stroke topology is better/equal, stroke output replaces TTF.
+- `--no-text-fallback` disables that replacement.
+
+## High-Value Regression Tests
+
+Use targeted tests matching your change surface:
+
+- Roads/manifold intersections:
+  - `cargo test layers::roads::tests::test_intersection_roads_are_manifold`
+  - `cargo test layers::roads::tests::test_closed_loop_roads_keep_hole`
+- Text topology/holes:
+  - `cargo test layers::text::tests::test_ttf_text_topology_monaco`
+  - `cargo test layers::text::tests::test_ttf_monaco_word_o_holes_not_filled`
+- Extrusion and triangulation:
+  - `cargo test mesh::extrusion::tests::`
+  - `cargo test mesh::triangulation::tests::`
+- Full local baseline:
+  - `cargo test`
+
+Note: tests are compiled/run for both `lib` and `main` targets, so totals appear duplicated.
+
+## Mesh QA Workflow
+
+Recommended smoke run after geometry changes:
 
 ```bash
-# Build
-cargo build                    # Debug build
-cargo build --release          # Release build
-
-# Run
-cargo run -- -c "Monaco" -C "Monaco" -r 2000
-
-# Lint & Format
-cargo clippy                   # Run clippy lints
-cargo clippy -- -D warnings    # Treat warnings as errors (CI mode)
-cargo fmt                      # Format code
-cargo fmt -- --check           # Check formatting (CI mode)
-
-# Test - all tests
-cargo test                     # Run all tests
-
-# Test - single test by name
-cargo test test_triangle_normal           # Run test containing this string
-cargo test mesh::validation::tests::      # Run tests in specific module
-cargo test -- --exact test_valid_triangle # Exact match
-
-# Test - with output
-cargo test -- --nocapture      # Show println! output
-
-# Fast compile check (no codegen)
-cargo check
-
-# Documentation
-cargo doc --open               # Build and open docs
+cargo run -- -c "Monaco" -C "Monaco" -r 2000 --water --parks -o /tmp/monaco.stl
+cargo run --bin mesh_check -- /tmp/monaco.stl
 ```
 
----
+`mesh_check` is the quickest way to catch boundary edges, non-manifold edges, and floating components.
 
-## Code Style Guidelines
+## Change Map (Edit X -> Also Check Y)
 
-### Imports
-Order imports: external crates, then `std::`, then local (`use crate::`/`use super::`).
-Separate groups with blank lines.
+- Road class/filter changes:
+  - Update `src/domain/road.rs`, `src/api/overpass.rs`, and width logic in `src/layers/roads.rs`.
+- Feature height or layer ordering changes:
+  - Update `src/config/mod.rs` and `print_color_change_guide()` in `src/main.rs`.
+- Text layout/renderer changes:
+  - Update `src/layers/text.rs` and rerun text topology tests.
+- OSM query changes:
+  - Keep parser expectations in `src/osm/parser.rs` aligned.
+- CLI option changes:
+  - Keep docs in `README.md` and clap docs in `src/main.rs` synchronized.
 
-```rust
-use anyhow::{Context, Result, bail};      // External crates
-use serde::Deserialize;
+## Performance Hotspots
 
-use std::collections::HashMap;            // Standard library
-use std::path::PathBuf;
-
-use crate::domain::RoadClass;             // Crate modules
-use super::Triangle;                      // Local module
-```
-
-### Naming Conventions
-
-| Item | Convention | Example |
-|------|------------|---------|
-| Structs/Enums | PascalCase | `RoadSegment`, `RoadClass::Motorway` |
-| Functions | snake_case | `parse_roads`, `calculate_normal` |
-| Constants | SCREAMING_SNAKE_CASE | `MIN_TRIANGLE_AREA`, `USER_AGENT` |
-| Type aliases | PascalCase | `Coord` |
-
-### Numeric Types
-
-| Context | Type | Reason |
-|---------|------|--------|
-| WGS84 coordinates (lat/lon) | `f64` | Precision for geospatial math |
-| Mesh geometry (vertices, normals) | `f32` | STL format requirement |
-| Physical dimensions (mm) | `f32` | Model output |
-| Counts/indices | `usize` | Rust convention |
-| API parameters (radius, etc.) | `u32` | CLI input |
-
-### Error Handling
-Use `anyhow` with context for application errors:
-```rust
-use anyhow::{Context, Result, bail};
-
-fn load_config(path: &Path) -> Result<Config> {
-    let contents = std::fs::read_to_string(path)
-        .context(format!("Failed to read config file: {:?}", path))?;
-    
-    if contents.is_empty() {
-        bail!("Config file is empty: {:?}", path);
-    }
-    
-    toml::from_str(&contents).context("Failed to parse config file")
-}
-```
-
-### Documentation
-- `///` for public items, `//!` for module-level docs
-- Include examples in doc comments for complex functions
-
-### Testing
-Tests in `#[cfg(test)] mod tests` at bottom of file:
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_valid_triangle() {
-        let tri = Triangle::new([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
-        assert!(!is_degenerate(&tri));
-    }
-}
-```
-- Test names: `test_<what_is_being_tested>`
-- Helper functions above `#[test]` functions
-
-### Struct Patterns
-Builder pattern with `with_*` methods:
-```rust
-let config = RoadConfig::default()
-    .with_scale(1.5)
-    .with_map_radius(radius, size);
-```
-
-Guard clauses for early returns:
-```rust
-pub fn extrude_polygon(outer: &[(f32, f32)], ...) -> Vec<Triangle> {
-    if outer.len() < 3 {
-        return Vec::new();  // Early return for invalid input
-    }
-    // ... main logic
-}
-```
-
----
-
-## Key Dependencies
-
-| Crate | Purpose |
-|-------|---------|
-| `clap` | CLI argument parsing with derive macros |
-| `reqwest` | HTTP client (blocking mode) for APIs |
-| `serde` / `serde_json` / `toml` | Serialization |
-| `geo` | Geometric types and operations |
-| `stl_io` | STL file I/O |
-| `anyhow` / `thiserror` | Error handling |
-| `earcutr` | Polygon triangulation |
-| `indicatif` | Progress spinners |
-
----
-
-## Architecture Overview
-
-```
-src/
-├── main.rs           # CLI entry point, argument parsing (clap)
-├── api/              # External API clients (Nominatim, Overpass)
-├── config/           # TOML config parsing, feature heights
-├── domain/           # Core types: RoadSegment, WaterPolygon, ParkPolygon
-├── geometry/         # Projection (WGS84->meters), scaling, simplification
-├── layers/           # Mesh generation: base, roads, water, parks, text
-├── mesh/             # Triangle, MeshBuilder, STL writer, validation
-└── osm/              # Overpass response parsing
-```
-
-**Coordinate Pipeline:**
-```
-WGS84 (f64) -> Projector -> Local meters (f64) -> Scaler -> Model mm (f32)
-```
-
----
-
-## Gotchas
-
-1. **STL uses f32** - All mesh vertices must be `f32`, but coordinate math uses `f64`
-2. **Winding order matters** - CCW = outward-facing normal (right-hand rule)
-3. **Holes in polygons** - Use `extrude_polygon` with holes parameter
-4. **API rate limits** - Nominatim has strict rate limits; Overpass may timeout
-5. **Large maps** - Simplification (`--simplify`) reduces triangle count
+- Road polygon union is expensive on large maps.
+- `ROAD_UNION_BATCH_SIZE` in `src/layers/roads.rs` is a key tuning knob.
+- `simplify` levels materially reduce triangle count; validate detail loss before changing epsilon constants.
+- TTF contour subdivision (`CURVE_SUBDIVISIONS`) affects text quality and triangle count.
