@@ -261,9 +261,7 @@ where
         cache_namespace,
         &request_payload,
         || fetcher(query, config),
-        |payload| {
-            serde_json::from_str(payload).context("Failed to parse Overpass JSON response")
-        },
+        |payload| serde_json::from_str(payload).context("Failed to parse Overpass JSON response"),
     )
 }
 

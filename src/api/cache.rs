@@ -225,7 +225,10 @@ where
         }
     }
 
-    match fetcher_with_notice(cache_policy_notice(namespace, &cached, policy.refresh), fetcher) {
+    match fetcher_with_notice(
+        cache_policy_notice(namespace, &cached, policy.refresh),
+        fetcher,
+    ) {
         Ok(payload) => {
             let parsed = parser(&payload)?;
             if let Err(err) = store(policy, namespace, request_payload, &payload) {
@@ -250,11 +253,7 @@ where
     }
 }
 
-fn cache_policy_notice(
-    namespace: &str,
-    cached: &CacheLookup,
-    refresh: bool,
-) -> Option<String> {
+fn cache_policy_notice(namespace: &str, cached: &CacheLookup, refresh: bool) -> Option<String> {
     let notice = match cached {
         CacheLookup::Miss => format!("Cache miss; fetching from network for {namespace}"),
         CacheLookup::Hit { freshness, .. } => {

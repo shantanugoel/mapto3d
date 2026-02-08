@@ -18,7 +18,7 @@ use api::{
     fetch_roads_with_depth_and_cache, fetch_water_with_cache, geocode_city_with_cache,
 };
 use config::{FeatureHeights, FileConfig};
-use geometry::{Bounds, Projector, Scaler};
+use geometry::{Bounds, ClipRect, Projector, Scaler};
 use layers::{
     RoadConfig, TextRenderer, generate_base_plate, generate_park_meshes, generate_road_meshes,
     generate_water_meshes,
@@ -430,6 +430,7 @@ fn main() -> Result<()> {
 
     let text_margin_mm = 20.0;
     let scaler = Scaler::from_bounds_with_margin(&bounds, size as f64, text_margin_mm);
+    let clip_rect = ClipRect::from_bounds(&bounds, &scaler);
     spinner.finish_with_message(format!(
         "Map area: {:.0}m x {:.0}m -> {:.0}mm x {:.0}mm (with {:.0}mm text margin)",
         bounds.width(),
@@ -448,8 +449,13 @@ fn main() -> Result<()> {
     }
 
     let water_triangles = if args.water {
-        let triangles =
-            generate_water_meshes(&water, &projector, &scaler, feature_heights.water_z_top);
+        let triangles = generate_water_meshes(
+            &water,
+            &projector,
+            &scaler,
+            &clip_rect,
+            feature_heights.water_z_top,
+        );
         if verbose {
             println!("  Water: {} triangles", triangles.len());
         }
@@ -459,8 +465,13 @@ fn main() -> Result<()> {
     };
 
     let park_triangles = if args.parks {
-        let triangles =
-            generate_park_meshes(&parks, &projector, &scaler, feature_heights.park_z_top);
+        let triangles = generate_park_meshes(
+            &parks,
+            &projector,
+            &scaler,
+            &clip_rect,
+            feature_heights.park_z_top,
+        );
         if verbose {
             println!("  Parks: {} triangles", triangles.len());
         }

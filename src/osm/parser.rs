@@ -288,7 +288,10 @@ fn collect_way_fragments(
                 member.role == "inner"
             }
         })
-        .filter_map(|member| ways.get(&member.ref_id).map(|nodes| (member.ref_id, nodes.clone())))
+        .filter_map(|member| {
+            ways.get(&member.ref_id)
+                .map(|nodes| (member.ref_id, nodes.clone()))
+        })
         .filter(|(_, nodes)| nodes.len() >= 2)
         .collect()
 }
@@ -365,7 +368,9 @@ fn stitch_fragments(mut fragments: Vec<(u64, Vec<u64>)>) -> (Vec<StitchedRing>, 
 
         if ring_nodes.len() >= 4 && ring_nodes.first() == ring_nodes.last() {
             used_way_ids.extend(&ring_way_ids);
-            rings.push(StitchedRing { node_ids: ring_nodes });
+            rings.push(StitchedRing {
+                node_ids: ring_nodes,
+            });
         }
     }
 

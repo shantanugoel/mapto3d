@@ -57,7 +57,6 @@ impl Projector {
         }
     }
 
-
     /// Project a lat/lon point to local meters
     ///
     /// Uses refined ellipsoidal calculations for better accuracy
