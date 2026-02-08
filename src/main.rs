@@ -13,7 +13,10 @@ mod layers;
 mod mesh;
 mod osm;
 
-use api::{RoadDepth, fetch_parks, fetch_roads_with_depth, fetch_water, geocode_city};
+use api::{
+    CachePolicy, RoadDepth, fetch_parks_with_cache, fetch_roads_with_depth_and_cache,
+    fetch_water_with_cache, geocode_city_with_cache,
+};
 use config::{FeatureHeights, FileConfig};
 use geometry::{Bounds, Projector, Scaler};
 use layers::{
@@ -103,6 +106,22 @@ struct Args {
     #[arg(short = 'v', long)]
     verbose: bool,
 
+    /// Disable HTTP response caching
+    #[arg(long)]
+    no_cache: bool,
+
+    /// Force refresh from network and bypass fresh cache reads
+    #[arg(long)]
+    refresh: bool,
+
+    /// Cache TTL in hours
+    #[arg(long, default_value = "24")]
+    cache_ttl_hours: u64,
+
+    /// Cache directory path
+    #[arg(long)]
+    cache_dir: Option<PathBuf>,
+
     /// Road simplification level: 0=off (default), 1=light, 2=medium, 3=aggressive
     /// Higher values reduce triangle count but may lose curve detail
     #[arg(long, default_value = "0", value_parser = clap::value_parser!(u8).range(0..=3))]
@@ -189,6 +208,32 @@ fn main() -> Result<()> {
         file_config.as_ref().map(|c| c.simplify).unwrap_or(0)
     };
     let verbose = args.verbose || file_config.as_ref().map(|c| c.verbose).unwrap_or(false);
+    let cache_enabled = if args.no_cache {
+        false
+    } else {
+        file_config
+            .as_ref()
+            .map(|c| c.cache_enabled)
+            .unwrap_or(true)
+    };
+    let cache_ttl_hours = if args.cache_ttl_hours != 24 {
+        args.cache_ttl_hours
+    } else {
+        file_config
+            .as_ref()
+            .map(|c| c.cache_ttl_hours)
+            .unwrap_or(24)
+    };
+    let cache_dir = args
+        .cache_dir
+        .clone()
+        .or_else(|| file_config.as_ref().and_then(|c| c.cache_dir.clone()));
+    let cache_policy = CachePolicy::new(
+        cache_enabled,
+        args.refresh,
+        cache_ttl_hours.saturating_mul(3600),
+        cache_dir,
+    );
     let primary_text = args
         .primary_text
         .clone()
@@ -256,6 +301,19 @@ fn main() -> Result<()> {
         );
         println!("  Output: {}", output_path.display());
         println!("  Overpass mirrors: {}", overpass_config.urls.len());
+        println!(
+            "  HTTP cache: {}",
+            if cache_policy.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        if cache_policy.enabled {
+            println!("  Cache refresh: {}", args.refresh);
+            println!("  Cache TTL: {}h", cache_ttl_hours);
+            println!("  Cache dir: {}", cache_policy.cache_dir.display());
+        }
         println!();
     }
 
@@ -267,7 +325,8 @@ fn main() -> Result<()> {
         let co = country.as_ref().unwrap();
         let spinner = create_spinner("Geocoding city...");
         let start = Instant::now();
-        let coords = geocode_city(c, co).context("Failed to geocode city")?;
+        let coords =
+            geocode_city_with_cache(c, co, &cache_policy).context("Failed to geocode city")?;
         spinner.finish_with_message(format!(
             "Geocoded: {}, {} -> ({:.4}, {:.4}) [{:.1}s]",
             c,
@@ -281,8 +340,14 @@ fn main() -> Result<()> {
 
     let spinner = create_spinner("Fetching roads from OpenStreetMap...");
     let start = Instant::now();
-    let roads_response = fetch_roads_with_depth(center, radius, road_depth, &overpass_config)
-        .context("Failed to fetch roads from Overpass API")?;
+    let roads_response = fetch_roads_with_depth_and_cache(
+        center,
+        radius,
+        road_depth,
+        &overpass_config,
+        &cache_policy,
+    )
+    .context("Failed to fetch roads from Overpass API")?;
     spinner.finish_with_message(format!(
         "Fetched {} road elements [{:.1}s]",
         roads_response.elements.len(),
@@ -307,7 +372,8 @@ fn main() -> Result<()> {
         let spinner = create_spinner("Fetching water features...");
         let start = Instant::now();
         let water_response =
-            fetch_water(center, radius, &overpass_config).context("Failed to fetch water data")?;
+            fetch_water_with_cache(center, radius, &overpass_config, &cache_policy)
+                .context("Failed to fetch water data")?;
         spinner.finish_with_message(format!(
             "Fetched {} water elements [{:.1}s]",
             water_response.elements.len(),
@@ -327,7 +393,8 @@ fn main() -> Result<()> {
         let spinner = create_spinner("Fetching park features...");
         let start = Instant::now();
         let parks_response =
-            fetch_parks(center, radius, &overpass_config).context("Failed to fetch park data")?;
+            fetch_parks_with_cache(center, radius, &overpass_config, &cache_policy)
+                .context("Failed to fetch park data")?;
         spinner.finish_with_message(format!(
             "Fetched {} park elements [{:.1}s]",
             parks_response.elements.len(),

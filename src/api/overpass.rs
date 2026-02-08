@@ -3,9 +3,13 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
+use crate::api::cache::{CachePolicy, get_or_fetch_payload};
 use crate::config::OverpassConfig;
 
 const USER_AGENT: &str = "mapto3d/0.1.0 (https://github.com/shantanugoel/mapto3d)";
+const CACHE_NAMESPACE_ROADS: &str = "overpass_roads";
+const CACHE_NAMESPACE_WATER: &str = "overpass_water";
+const CACHE_NAMESPACE_PARKS: &str = "overpass_parks";
 
 #[derive(Debug, Deserialize)]
 pub struct OverpassResponse {
@@ -116,6 +120,16 @@ pub fn fetch_roads_with_depth(
     depth: RoadDepth,
     config: &OverpassConfig,
 ) -> Result<OverpassResponse> {
+    fetch_roads_with_depth_and_cache(center, radius_m, depth, config, &CachePolicy::default())
+}
+
+pub fn fetch_roads_with_depth_and_cache(
+    center: (f64, f64),
+    radius_m: u32,
+    depth: RoadDepth,
+    config: &OverpassConfig,
+    cache_policy: &CachePolicy,
+) -> Result<OverpassResponse> {
     let (south, west, north, east) = calculate_bbox(center, radius_m);
 
     // Overpass QL query for highways with depth filter
@@ -135,7 +149,7 @@ out skel qt;"#,
         east = east
     );
 
-    execute_overpass_query(&query, config)
+    execute_overpass_query_with_cache(&query, config, cache_policy, CACHE_NAMESPACE_ROADS)
 }
 
 /// Fetch water features from Overpass API
@@ -151,6 +165,15 @@ pub fn fetch_water(
     center: (f64, f64),
     radius_m: u32,
     config: &OverpassConfig,
+) -> Result<OverpassResponse> {
+    fetch_water_with_cache(center, radius_m, config, &CachePolicy::default())
+}
+
+pub fn fetch_water_with_cache(
+    center: (f64, f64),
+    radius_m: u32,
+    config: &OverpassConfig,
+    cache_policy: &CachePolicy,
 ) -> Result<OverpassResponse> {
     let (south, west, north, east) = calculate_bbox(center, radius_m);
 
@@ -173,7 +196,7 @@ out skel qt;"#,
         east = east
     );
 
-    execute_overpass_query(&query, config)
+    execute_overpass_query_with_cache(&query, config, cache_policy, CACHE_NAMESPACE_WATER)
 }
 
 /// Fetch park features from Overpass API
@@ -186,6 +209,15 @@ pub fn fetch_parks(
     center: (f64, f64),
     radius_m: u32,
     config: &OverpassConfig,
+) -> Result<OverpassResponse> {
+    fetch_parks_with_cache(center, radius_m, config, &CachePolicy::default())
+}
+
+pub fn fetch_parks_with_cache(
+    center: (f64, f64),
+    radius_m: u32,
+    config: &OverpassConfig,
+    cache_policy: &CachePolicy,
 ) -> Result<OverpassResponse> {
     let (south, west, north, east) = calculate_bbox(center, radius_m);
 
@@ -209,11 +241,41 @@ out skel qt;"#,
         east = east
     );
 
-    execute_overpass_query(&query, config)
+    execute_overpass_query_with_cache(&query, config, cache_policy, CACHE_NAMESPACE_PARKS)
 }
 
-/// Execute an Overpass API query with retry logic and URL fallback
-fn execute_overpass_query(query: &str, config: &OverpassConfig) -> Result<OverpassResponse> {
+fn execute_overpass_query_with_cache(
+    query: &str,
+    config: &OverpassConfig,
+    cache_policy: &CachePolicy,
+    cache_namespace: &str,
+) -> Result<OverpassResponse> {
+    execute_overpass_query_with_fetcher(query, config, cache_policy, cache_namespace, |q, c| {
+        fetch_overpass_payload(q, c)
+    })
+}
+
+fn execute_overpass_query_with_fetcher<F>(
+    query: &str,
+    config: &OverpassConfig,
+    cache_policy: &CachePolicy,
+    cache_namespace: &str,
+    fetcher: F,
+) -> Result<OverpassResponse>
+where
+    F: FnOnce(&str, &OverpassConfig) -> Result<String>,
+{
+    let request_payload = cache_request_payload(query);
+    let payload = get_or_fetch_payload(cache_policy, cache_namespace, &request_payload, || {
+        fetcher(query, config)
+    })?;
+
+    let result: OverpassResponse =
+        serde_json::from_str(&payload).context("Failed to parse Overpass JSON response")?;
+    Ok(result)
+}
+
+fn fetch_overpass_payload(query: &str, config: &OverpassConfig) -> Result<String> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(config.timeout_secs))
@@ -264,10 +326,10 @@ fn execute_overpass_query(query: &str, config: &OverpassConfig) -> Result<Overpa
 
             match response.status().as_u16() {
                 200 => {
-                    let result: OverpassResponse = response
-                        .json()
-                        .context("Failed to parse Overpass JSON response")?;
-                    return Ok(result);
+                    let payload = response
+                        .text()
+                        .context("Failed to read Overpass response body")?;
+                    return Ok(payload);
                 }
                 429 | 504 => {
                     // 429 = Too Many Requests, 504 = Gateway Timeout
@@ -302,9 +364,15 @@ fn execute_overpass_query(query: &str, config: &OverpassConfig) -> Result<Overpa
     )
 }
 
+fn cache_request_payload(query: &str) -> String {
+    format!("query={query}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::cache::{self, CacheLookup};
+    use std::cell::Cell;
 
     #[test]
     fn test_calculate_bbox() {
@@ -330,5 +398,66 @@ mod tests {
         assert_eq!(response.elements.len(), 2);
         assert_eq!(response.elements[0].type_, "node");
         assert_eq!(response.elements[1].type_, "way");
+    }
+
+    #[test]
+    fn test_overpass_uses_cache_hit_without_network_fetch() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = CachePolicy::new(true, false, 24 * 60 * 60, Some(temp.path().to_path_buf()));
+        let query = "[out:json];way(0,0,1,1);out;";
+        let request_payload = cache_request_payload(query);
+        let cached_payload = r#"{"elements":[{"type":"node","id":1,"lat":1.0,"lon":2.0}]}"#;
+        cache::store(
+            &policy,
+            CACHE_NAMESPACE_ROADS,
+            &request_payload,
+            cached_payload,
+        )
+        .unwrap();
+
+        let calls = Cell::new(0);
+        let response = execute_overpass_query_with_fetcher(
+            query,
+            &OverpassConfig::default(),
+            &policy,
+            CACHE_NAMESPACE_ROADS,
+            |_, _| {
+                calls.set(calls.get() + 1);
+                Ok(r#"{"elements":[]}"#.to_string())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(calls.get(), 0);
+        assert_eq!(response.elements.len(), 1);
+        assert_eq!(response.elements[0].id, 1);
+    }
+
+    #[test]
+    fn test_overpass_fetches_and_populates_cache_on_miss() {
+        let temp = tempfile::tempdir().unwrap();
+        let policy = CachePolicy::new(true, false, 24 * 60 * 60, Some(temp.path().to_path_buf()));
+        let query = "[out:json];way(0,0,1,1);out;";
+
+        let calls = Cell::new(0);
+        let response = execute_overpass_query_with_fetcher(
+            query,
+            &OverpassConfig::default(),
+            &policy,
+            CACHE_NAMESPACE_PARKS,
+            |_, _| {
+                calls.set(calls.get() + 1);
+                Ok(r#"{"elements":[{"type":"node","id":42,"lat":3.0,"lon":4.0}]}"#.to_string())
+            },
+        )
+        .unwrap();
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(response.elements.len(), 1);
+        assert_eq!(response.elements[0].id, 42);
+
+        let request_payload = cache_request_payload(query);
+        let lookup = cache::lookup(&policy, CACHE_NAMESPACE_PARKS, &request_payload).unwrap();
+        assert!(matches!(lookup, CacheLookup::Hit { .. }));
     }
 }

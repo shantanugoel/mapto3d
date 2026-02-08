@@ -118,6 +118,12 @@ fn default_simplify() -> u8 {
 fn default_verbose() -> bool {
     false
 }
+fn default_cache_enabled() -> bool {
+    true
+}
+fn default_cache_ttl_hours() -> u64 {
+    24
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct FileConfig {
@@ -149,6 +155,12 @@ pub struct FileConfig {
     pub verbose: bool,
     #[serde(default = "default_simplify")]
     pub simplify: u8,
+    #[serde(default = "default_cache_enabled")]
+    pub cache_enabled: bool,
+    #[serde(default = "default_cache_ttl_hours")]
+    pub cache_ttl_hours: u64,
+    #[serde(default)]
+    pub cache_dir: Option<PathBuf>,
     #[serde(default)]
     pub overpass: Option<OverpassConfig>,
 }

@@ -65,6 +65,10 @@ Text:
 
 I/O:
       --config <PATH>
+      --no-cache
+      --refresh
+      --cache-dir <PATH>
+      --cache-ttl-hours <HOURS>  Cache TTL in hours (default: 24)
   -o, --output <OUTPUT>
   -v, --verbose
 ```
@@ -104,6 +108,9 @@ road_scale = 1.2
 road_depth = "secondary"
 simplify = 1
 verbose = true
+cache_enabled = true
+cache_ttl_hours = 24
+cache_dir = ".mapto3d-cache"
 primary_text = "TOKYO"
 secondary_text = "35.6764N / 139.6500E"
 output = "tokyo.stl"
@@ -118,6 +125,13 @@ max_retries = 3
 ```
 
 Supported config keys are exactly the fields in `src/config/mod.rs::FileConfig`. Notably, `water`, `parks`, `font`, and `no_text_fallback` are CLI-only right now.
+
+### HTTP Cache Defaults
+
+- Cache is enabled by default.
+- Default TTL is `24` hours.
+- Default cache dir is `$XDG_CACHE_HOME/mapto3d` when `XDG_CACHE_HOME` is set.
+- Otherwise cache dir falls back to `.mapto3d-cache` in the current working directory.
 
 ### Config vs CLI precedence
 
