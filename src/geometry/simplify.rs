@@ -11,7 +11,7 @@ pub fn simplify_polyline(points: &[(f64, f64)], epsilon: f64) -> Vec<(f64, f64)>
         .map(|&(lat, lon)| geo::coord! { x: lon, y: lat })
         .collect();
 
-    let simplified = line.simplify(&epsilon);
+    let simplified = line.simplify(epsilon);
 
     simplified.0.into_iter().map(|c| (c.y, c.x)).collect()
 }
