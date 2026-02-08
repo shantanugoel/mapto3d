@@ -918,10 +918,8 @@ mod tests {
         }
 
         let ttf_renderer = TtfTextRenderer::load(path, 4.4);
-        if ttf_renderer.is_some() {
-            let triangles = ttf_renderer
-                .unwrap()
-                .render_text("TEST", 0.0, 0.0, 0.0, 10.0);
+        if let Some(ttf) = ttf_renderer {
+            let triangles = ttf.render_text("TEST", 0.0, 0.0, 0.0, 10.0);
             assert!(!triangles.is_empty());
         } else {
             let stroke = StrokeTextRenderer::new(4.4);
@@ -1089,8 +1087,11 @@ mod tests {
         assert_eq!(rings[1].depth, 0);
     }
 
+    type QuantizedVertex = (i64, i64, i64);
+    type QuantizedEdge = (QuantizedVertex, QuantizedVertex);
+
     fn edge_topology_counts(triangles: &[Triangle]) -> (usize, usize) {
-        let mut counts: HashMap<((i64, i64, i64), (i64, i64, i64)), usize> = HashMap::new();
+        let mut counts: HashMap<QuantizedEdge, usize> = HashMap::new();
 
         for triangle in triangles {
             let vertices = triangle.vertices.map(quantize_vertex);
@@ -1105,7 +1106,7 @@ mod tests {
         (boundary_edges, non_manifold_edges)
     }
 
-    fn quantize_vertex(vertex: [f32; 3]) -> (i64, i64, i64) {
+    fn quantize_vertex(vertex: [f32; 3]) -> QuantizedVertex {
         const SCALE: f32 = 10_000.0;
         (
             (vertex[0] * SCALE).round() as i64,
@@ -1114,7 +1115,7 @@ mod tests {
         )
     }
 
-    fn ordered_edge(a: (i64, i64, i64), b: (i64, i64, i64)) -> ((i64, i64, i64), (i64, i64, i64)) {
+    fn ordered_edge(a: QuantizedVertex, b: QuantizedVertex) -> QuantizedEdge {
         if a <= b { (a, b) } else { (b, a) }
     }
 

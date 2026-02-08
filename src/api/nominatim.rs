@@ -13,7 +13,6 @@ const CACHE_NAMESPACE: &str = "nominatim_geocode";
 struct NominatimResult {
     lat: String,
     lon: String,
-    #[allow(dead_code)]
     display_name: String,
 }
 
@@ -78,6 +77,10 @@ fn parse_coords_from_payload(payload: &str, city: &str, country: &str) -> Result
         .into_iter()
         .next()
         .ok_or_else(|| anyhow::anyhow!("City not found: {}, {}", city, country))?;
+
+    if result.display_name.is_empty() {
+        bail!("Nominatim returned an empty display name for {city}, {country}");
+    }
 
     let lat: f64 = result
         .lat

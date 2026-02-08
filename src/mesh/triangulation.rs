@@ -25,32 +25,6 @@ pub fn triangulate_polygon(outer: &[(f32, f32)], holes: &[Vec<(f32, f32)>]) -> V
     earcut(&vertices, &hole_indices, 2).unwrap_or_default()
 }
 
-#[allow(dead_code)]
-pub fn triangulate_polygon_f64(outer: &[(f64, f64)], holes: &[Vec<(f64, f64)>]) -> Vec<usize> {
-    if outer.len() < 3 {
-        return Vec::new();
-    }
-
-    let mut vertices: Vec<f64> =
-        Vec::with_capacity((outer.len() + holes.iter().map(|h| h.len()).sum::<usize>()) * 2);
-    let mut hole_indices: Vec<usize> = Vec::with_capacity(holes.len());
-
-    for &(x, y) in outer {
-        vertices.push(x);
-        vertices.push(y);
-    }
-
-    for hole in holes {
-        hole_indices.push(vertices.len() / 2);
-        for &(x, y) in hole {
-            vertices.push(x);
-            vertices.push(y);
-        }
-    }
-
-    earcut(&vertices, &hole_indices, 2).unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

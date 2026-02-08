@@ -52,7 +52,7 @@ mod tests {
     fn test_generate_water_empty() {
         let projector = Projector::new((0.0, 0.0));
         let bounds = Bounds::from_points(&[(0.0, 0.0), (1000.0, 1000.0)]).unwrap();
-        let scaler = Scaler::from_bounds(&bounds, 220.0);
+        let scaler = Scaler::from_bounds_with_margin(&bounds, 220.0, 0.0);
 
         let triangles = generate_water_meshes(&[], &projector, &scaler, 2.6);
         assert!(triangles.is_empty());

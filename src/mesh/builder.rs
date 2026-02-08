@@ -16,12 +16,6 @@ impl Triangle {
             normal,
         }
     }
-
-    /// Create a triangle with a pre-calculated normal
-    #[allow(dead_code)]
-    pub fn with_normal(vertices: [[f32; 3]; 3], normal: [f32; 3]) -> Self {
-        Self { vertices, normal }
-    }
 }
 
 /// Calculate the normal vector for a triangle using the cross product
@@ -44,54 +38,6 @@ fn calculate_normal(v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) -> [f32; 3] {
     }
 }
 
-/// Accumulator for building triangle meshes
-#[allow(dead_code)]
-#[derive(Debug, Default)]
-pub struct MeshBuilder {
-    triangles: Vec<Triangle>,
-}
-
-#[allow(dead_code)]
-impl MeshBuilder {
-    pub fn new() -> Self {
-        Self {
-            triangles: Vec::new(),
-        }
-    }
-
-    /// Add a triangle from three vertices
-    pub fn add_triangle(&mut self, v0: [f32; 3], v1: [f32; 3], v2: [f32; 3]) {
-        self.triangles.push(Triangle::new(v0, v1, v2));
-    }
-
-    /// Add a quad (two triangles) from four vertices
-    /// Vertices should be in counter-clockwise order when viewed from above
-    pub fn add_quad(&mut self, v0: [f32; 3], v1: [f32; 3], v2: [f32; 3], v3: [f32; 3]) {
-        self.add_triangle(v0, v1, v2);
-        self.add_triangle(v0, v2, v3);
-    }
-
-    /// Add triangles from another collection
-    pub fn extend(&mut self, triangles: impl IntoIterator<Item = Triangle>) {
-        self.triangles.extend(triangles);
-    }
-
-    /// Get the number of triangles
-    pub fn len(&self) -> usize {
-        self.triangles.len()
-    }
-
-    /// Check if empty
-    pub fn is_empty(&self) -> bool {
-        self.triangles.is_empty()
-    }
-
-    /// Consume the builder and return the triangles
-    pub fn finish(self) -> Vec<Triangle> {
-        self.triangles
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,19 +51,5 @@ mod tests {
         assert!((tri.normal[0]).abs() < 0.001);
         assert!((tri.normal[1]).abs() < 0.001);
         assert!((tri.normal[2] - 1.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_mesh_builder() {
-        let mut builder = MeshBuilder::new();
-        builder.add_triangle([0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]);
-        builder.add_quad(
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 0.0],
-        );
-
-        assert_eq!(builder.len(), 3); // 1 triangle + 2 from quad
     }
 }

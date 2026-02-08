@@ -94,25 +94,6 @@ impl RoadDepth {
     }
 }
 
-/// Fetch road data from Overpass API
-///
-/// # Arguments
-/// * `center` - (lat, lon) center point
-/// * `radius_m` - Radius in meters
-/// * `depth` - Which road classes to include
-///
-/// # Returns
-/// * `OverpassResponse` containing all highway ways and their nodes
-#[allow(dead_code)]
-pub fn fetch_roads(center: (f64, f64), radius_m: u32) -> Result<OverpassResponse> {
-    fetch_roads_with_depth(
-        center,
-        radius_m,
-        RoadDepth::default(),
-        &OverpassConfig::default(),
-    )
-}
-
 /// Fetch road data with configurable depth
 pub fn fetch_roads_with_depth(
     center: (f64, f64),

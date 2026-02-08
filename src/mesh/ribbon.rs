@@ -1,28 +1,5 @@
 use super::Triangle;
 
-/// Extrude a 2D polyline into a 3D ribbon mesh
-///
-/// Creates a ribbon of the specified width and height from a series of 2D points.
-/// The ribbon has top, bottom, and side faces.
-///
-/// # Arguments
-/// * `points` - 2D points in mm [(x, y), ...]
-/// * `width` - Ribbon width in mm
-/// * `height` - Ribbon height in mm
-/// * `base_z` - Base Z level in mm
-///
-/// # Returns
-/// Vector of triangles forming the ribbon mesh
-#[allow(dead_code)]
-pub fn extrude_ribbon(
-    points: &[(f32, f32)],
-    width: f32,
-    height: f32,
-    base_z: f32,
-) -> Vec<Triangle> {
-    extrude_ribbon_ex(points, width, height, base_z, true, true)
-}
-
 /// Extrude a 2D polyline into a 3D ribbon mesh with control over faces
 ///
 /// # Arguments
@@ -155,7 +132,7 @@ mod tests {
     #[test]
     fn test_extrude_simple_segment() {
         let points = vec![(0.0, 0.0), (10.0, 0.0)];
-        let triangles = extrude_ribbon(&points, 2.0, 1.0, 0.0);
+        let triangles = extrude_ribbon_ex(&points, 2.0, 1.0, 0.0, true, true);
         assert_eq!(triangles.len(), 12);
     }
 
@@ -169,14 +146,14 @@ mod tests {
     #[test]
     fn test_extrude_empty() {
         let points: Vec<(f32, f32)> = vec![];
-        let triangles = extrude_ribbon(&points, 2.0, 1.0, 0.0);
+        let triangles = extrude_ribbon_ex(&points, 2.0, 1.0, 0.0, true, true);
         assert!(triangles.is_empty());
     }
 
     #[test]
     fn test_extrude_single_point() {
         let points = vec![(0.0, 0.0)];
-        let triangles = extrude_ribbon(&points, 2.0, 1.0, 0.0);
+        let triangles = extrude_ribbon_ex(&points, 2.0, 1.0, 0.0, true, true);
         assert!(triangles.is_empty());
     }
 }

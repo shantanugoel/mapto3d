@@ -284,20 +284,6 @@ where
     fetcher()
 }
 
-pub fn get_or_fetch_payload<F>(
-    policy: &CachePolicy,
-    namespace: &str,
-    request_payload: &str,
-    fetcher: F,
-) -> Result<String>
-where
-    F: FnOnce() -> Result<String>,
-{
-    get_or_fetch_with_parser(policy, namespace, request_payload, fetcher, |payload| {
-        Ok(payload.to_string())
-    })
-}
-
 fn cache_path(cache_dir: &Path, namespace: &str, payload: &str) -> PathBuf {
     let key = make_cache_key(namespace, payload);
     cache_dir.join(namespace).join(format!("{key}.json"))
@@ -377,30 +363,6 @@ mod tests {
                 freshness: CacheFreshness::Fresh
             }
         );
-    }
-
-    #[test]
-    fn test_get_or_fetch_returns_stale_payload_on_fetch_error() {
-        let temp = tempfile::tempdir().unwrap();
-        let cache_dir = temp.path().to_path_buf();
-        let policy = CachePolicy::new(true, false, 1, Some(cache_dir.clone()));
-        let request = "data=query";
-
-        let stale_entry = CacheEnvelope {
-            schema_version: SCHEMA_VERSION,
-            created_at_unix: unix_now().saturating_sub(10),
-            payload: "cached".to_string(),
-        };
-        let stale_path = cache_path(&cache_dir, "overpass", request);
-        fs::create_dir_all(stale_path.parent().unwrap()).unwrap();
-        fs::write(&stale_path, serde_json::to_string(&stale_entry).unwrap()).unwrap();
-
-        let payload = get_or_fetch_payload(&policy, "overpass", request, || {
-            anyhow::bail!("network down")
-        })
-        .unwrap();
-
-        assert_eq!(payload, "cached");
     }
 
     #[test]

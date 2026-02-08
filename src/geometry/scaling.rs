@@ -34,17 +34,6 @@ impl Bounds {
         })
     }
 
-    /// Expand bounds to include another set of points
-    #[allow(dead_code)]
-    pub fn expand(&mut self, points: &[(f64, f64)]) {
-        for &(x, y) in points {
-            self.min_x = self.min_x.min(x);
-            self.max_x = self.max_x.max(x);
-            self.min_y = self.min_y.min(y);
-            self.max_y = self.max_y.max(y);
-        }
-    }
-
     pub fn width(&self) -> f64 {
         self.max_x - self.min_x
     }
@@ -62,30 +51,12 @@ pub struct Scaler {
     /// Offset to center the map
     offset_x: f64,
     offset_y: f64,
-    /// Target size in mm
-    #[allow(dead_code)]
-    target_mm: f64,
 }
 
 impl Scaler {
-    #[allow(dead_code)]
-    pub fn new(scale: f64, offset: (f64, f64)) -> Self {
-        Self {
-            scale,
-            offset_x: offset.0,
-            offset_y: offset.1,
-            target_mm: 220.0,
-        }
-    }
-
-    /// Create a scaler from bounds and target physical size
-    ///
-    /// # Arguments
-    /// * `bounds` - Bounding box in meters
-    /// * `target_mm` - Target size in mm (will fit the larger dimension)
-    #[allow(dead_code)]
-    pub fn from_bounds(bounds: &Bounds, target_mm: f64) -> Self {
-        Self::from_bounds_with_margin(bounds, target_mm, 0.0)
+    #[cfg(test)]
+    fn scale_factor(&self) -> f64 {
+        self.scale
     }
 
     /// Create a scaler with a bottom margin reserved for text labels
@@ -113,7 +84,6 @@ impl Scaler {
             scale,
             offset_x,
             offset_y,
-            target_mm,
         }
     }
 
@@ -125,24 +95,6 @@ impl Scaler {
         let scaled_x = x * self.scale + self.offset_x;
         let scaled_y = y * self.scale + self.offset_y;
         (scaled_x as f32, scaled_y as f32)
-    }
-
-    /// Scale a slice of points
-    #[allow(dead_code)]
-    pub fn scale_points(&self, points: &[(f64, f64)]) -> Vec<(f32, f32)> {
-        points.iter().map(|&(x, y)| self.scale(x, y)).collect()
-    }
-
-    /// Get the scale factor (mm per meter)
-    #[allow(dead_code)]
-    pub fn scale_factor(&self) -> f64 {
-        self.scale
-    }
-
-    /// Get the target size in mm
-    #[allow(dead_code)]
-    pub fn target_size(&self) -> f64 {
-        self.target_mm
     }
 }
 
@@ -170,7 +122,7 @@ mod tests {
             max_y: 10000.0,
         };
 
-        let scaler = Scaler::from_bounds(&bounds, 220.0);
+        let scaler = Scaler::from_bounds_with_margin(&bounds, 220.0, 0.0);
 
         // 10km should scale to 220mm
         // scale = 220 / 10000 = 0.022 mm/m

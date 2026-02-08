@@ -14,8 +14,8 @@ mod mesh;
 mod osm;
 
 use api::{
-    CachePolicy, RoadDepth, fetch_parks_with_cache, fetch_roads_with_depth_and_cache,
-    fetch_water_with_cache, geocode_city_with_cache,
+    CachePolicy, RoadDepth, fetch_parks_with_cache, fetch_roads_with_depth,
+    fetch_roads_with_depth_and_cache, fetch_water_with_cache, geocode_city_with_cache,
 };
 use config::{FeatureHeights, FileConfig};
 use geometry::{Bounds, Projector, Scaler};
@@ -340,13 +340,17 @@ fn main() -> Result<()> {
 
     let spinner = create_spinner("Fetching roads from OpenStreetMap...");
     let start = Instant::now();
-    let roads_response = fetch_roads_with_depth_and_cache(
-        center,
-        radius,
-        road_depth,
-        &overpass_config,
-        &cache_policy,
-    )
+    let roads_response = if cache_policy.enabled {
+        fetch_roads_with_depth_and_cache(
+            center,
+            radius,
+            road_depth,
+            &overpass_config,
+            &cache_policy,
+        )
+    } else {
+        fetch_roads_with_depth(center, radius, road_depth, &overpass_config)
+    }
     .context("Failed to fetch roads from Overpass API")?;
     spinner.finish_with_message(format!(
         "Fetched {} road elements [{:.1}s]",
@@ -510,7 +514,13 @@ fn main() -> Result<()> {
     all_triangles.extend(road_triangles);
     all_triangles.extend(text_triangles);
 
-    let (validated, _) = validate_and_fix(all_triangles);
+    let (validated, report) = validate_and_fix(all_triangles);
+    if report.has_issues() {
+        eprintln!("Warning: {}", report.summary());
+        for warning in &report.warnings {
+            eprintln!("  {warning}");
+        }
+    }
     let file_size = estimate_stl_size(validated.len());
 
     write_stl(&output_path, &validated).context("Failed to write STL file")?;
@@ -536,7 +546,8 @@ fn main() -> Result<()> {
 }
 
 fn print_color_change_guide(heights: &FeatureHeights) {
-    use mapto3d::config::heights::LAYER_HEIGHT;
+    const LAYER_HEIGHT: f32 = 0.2;
+    const FEATURE_INCREMENT: f32 = 0.6;
 
     let base_layers = (heights.base_height / LAYER_HEIGHT).round() as i32;
     let roads_top_layers = (heights.road_z_top / LAYER_HEIGHT).round() as i32;
@@ -550,33 +561,40 @@ fn print_color_change_guide(heights: &FeatureHeights) {
         "  Base:    0.0mm -> {:.1}mm ({} layers)",
         heights.base_height, base_layers
     );
+    println!("          height: {:.1}mm", heights.base_height);
 
     let mut color_num = 1;
 
     if heights.water_enabled {
         let water_top_layers = (heights.water_z_top / LAYER_HEIGHT).round() as i32;
+        let water_height = FEATURE_INCREMENT;
         println!(
             "  Water:   0.0mm -> {:.1}mm ({} layers)",
             heights.water_z_top, water_top_layers
         );
+        println!("          height: {:.1}mm", water_height);
     }
 
     if heights.parks_enabled {
         let parks_top_layers = (heights.park_z_top / LAYER_HEIGHT).round() as i32;
+        let park_height = FEATURE_INCREMENT;
         println!(
             "  Parks:   0.0mm -> {:.1}mm ({} layers)",
             heights.park_z_top, parks_top_layers
         );
+        println!("          height: {:.1}mm", park_height);
     }
 
     println!(
         "  Roads:   0.0mm -> {:.1}mm ({} layers)",
         heights.road_z_top, roads_top_layers
     );
+    println!("          height: {:.1}mm", FEATURE_INCREMENT);
     println!(
         "  Text:    0.0mm -> {:.1}mm ({} layers - tallest)",
         heights.text_z_top, text_top_layers
     );
+    println!("          height: {:.1}mm", FEATURE_INCREMENT);
     println!();
     println!(
         "Total height: {:.1}mm = {} layers",

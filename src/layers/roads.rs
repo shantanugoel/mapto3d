@@ -340,7 +340,7 @@ mod tests {
             })
             .collect();
         let bounds = Bounds::from_points(&projected_points).unwrap();
-        let scaler = Scaler::from_bounds(&bounds, 220.0);
+        let scaler = Scaler::from_bounds_with_margin(&bounds, 220.0, 0.0);
 
         let polygons = build_road_polygons(&roads, &projector, &scaler, &RoadConfig::default());
         assert!(!polygons.0.is_empty());
@@ -372,7 +372,7 @@ mod tests {
             })
             .collect();
         let bounds = Bounds::from_points(&projected_points).unwrap();
-        let scaler = Scaler::from_bounds(&bounds, 220.0);
+        let scaler = Scaler::from_bounds_with_margin(&bounds, 220.0, 0.0);
 
         let triangles = generate_road_meshes(&roads, &projector, &scaler, &RoadConfig::default());
         let (boundary_edges, non_manifold_edges) = edge_counts(&triangles);
@@ -382,8 +382,11 @@ mod tests {
         assert_eq!(non_manifold_edges, 0);
     }
 
+    type QuantizedVertex = (i64, i64, i64);
+    type QuantizedEdge = (QuantizedVertex, QuantizedVertex);
+
     fn edge_counts(triangles: &[Triangle]) -> (usize, usize) {
-        let mut counts: HashMap<((i64, i64, i64), (i64, i64, i64)), usize> = HashMap::new();
+        let mut counts: HashMap<QuantizedEdge, usize> = HashMap::new();
 
         for triangle in triangles {
             let vertices = triangle.vertices.map(quantize);
@@ -398,7 +401,7 @@ mod tests {
         (boundary_edges, non_manifold_edges)
     }
 
-    fn quantize(vertex: [f32; 3]) -> (i64, i64, i64) {
+    fn quantize(vertex: [f32; 3]) -> QuantizedVertex {
         const SCALE: f32 = 10_000.0;
         (
             (vertex[0] * SCALE).round() as i64,
@@ -407,7 +410,7 @@ mod tests {
         )
     }
 
-    fn ordered_edge(a: (i64, i64, i64), b: (i64, i64, i64)) -> ((i64, i64, i64), (i64, i64, i64)) {
+    fn ordered_edge(a: QuantizedVertex, b: QuantizedVertex) -> QuantizedEdge {
         if a <= b { (a, b) } else { (b, a) }
     }
 }

@@ -8,7 +8,6 @@ use geo_clipper::{ClipperOpen, EndType, JoinType};
 
 /// Buffer join style for road corners
 #[derive(Debug, Clone, Copy, Default)]
-#[allow(dead_code)]
 pub enum BufferJoinStyle {
     /// Round joins - smooth corners, best for roads
     #[default]
@@ -19,9 +18,28 @@ pub enum BufferJoinStyle {
     Miter,
 }
 
+impl BufferJoinStyle {
+    #[cfg(test)]
+    fn all() -> [Self; 3] {
+        [Self::Round, Self::Square, Self::Miter]
+    }
+}
+
+fn join_style_from_env() -> BufferJoinStyle {
+    match std::env::var("MAPTO3D_BUFFER_JOIN")
+        .ok()
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("square") => BufferJoinStyle::Square,
+        Some("miter") => BufferJoinStyle::Miter,
+        _ => BufferJoinStyle::Round,
+    }
+}
+
 /// Buffer end cap style for road endpoints
 #[derive(Debug, Clone, Copy, Default)]
-#[allow(dead_code)]
 pub enum BufferCapStyle {
     /// Round caps - semicircular ends
     #[default]
@@ -30,6 +48,26 @@ pub enum BufferCapStyle {
     Square,
     /// Butt caps - flat ends at exact endpoint
     Butt,
+}
+
+impl BufferCapStyle {
+    #[cfg(test)]
+    fn all() -> [Self; 3] {
+        [Self::Round, Self::Square, Self::Butt]
+    }
+}
+
+fn cap_style_from_env() -> BufferCapStyle {
+    match std::env::var("MAPTO3D_BUFFER_CAP")
+        .ok()
+        .as_deref()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("square") => BufferCapStyle::Square,
+        Some("butt") => BufferCapStyle::Butt,
+        _ => BufferCapStyle::Round,
+    }
 }
 
 /// Configuration for polyline buffering
@@ -61,8 +99,8 @@ impl BufferConfig {
     /// Create config optimized for smooth roads
     pub fn for_roads() -> Self {
         Self {
-            join_style: BufferJoinStyle::Round,
-            cap_style: BufferCapStyle::Round,
+            join_style: join_style_from_env(),
+            cap_style: cap_style_from_env(),
             miter_limit: 2.0,
             precision_factor: 1000.0,
         }
@@ -150,22 +188,6 @@ fn is_closed_loop(points: &[(f64, f64)]) -> bool {
     (dx * dx + dy * dy) < 1e-10
 }
 
-/// Buffer multiple polylines and return all resulting polygons
-#[allow(dead_code)]
-pub fn buffer_polylines<'a, I>(polylines: I, config: &BufferConfig) -> Vec<geo::Polygon<f64>>
-where
-    I: Iterator<Item = (&'a [(f64, f64)], f64)>,
-{
-    let mut all_polygons = Vec::new();
-
-    for (points, width) in polylines {
-        let multi = buffer_polyline(points, width, config);
-        all_polygons.extend(multi.0);
-    }
-
-    all_polygons
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,21 +238,32 @@ mod tests {
     #[test]
     fn test_buffer_different_styles() {
         let points = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0)];
+        let cap_styles = BufferCapStyle::all();
+        let default_config = BufferConfig::default();
 
-        for join_style in [
-            BufferJoinStyle::Round,
-            BufferJoinStyle::Square,
-            BufferJoinStyle::Miter,
-        ] {
+        for join_style in BufferJoinStyle::all() {
             let config = BufferConfig {
                 join_style,
-                ..Default::default()
+                ..default_config
             };
             let result = buffer_polyline(&points, 2.0, &config);
             assert!(
                 !result.0.is_empty(),
                 "Join style {:?} should work",
                 join_style
+            );
+        }
+
+        for cap_style in cap_styles {
+            let config = BufferConfig {
+                cap_style,
+                ..default_config
+            };
+            let result = buffer_polyline(&points, 2.0, &config);
+            assert!(
+                !result.0.is_empty(),
+                "Cap style {:?} should work",
+                cap_style
             );
         }
     }
