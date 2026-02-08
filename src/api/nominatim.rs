@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::thread;
 use std::time::Duration;
 
-use crate::api::cache::{CachePolicy, get_or_fetch_payload};
+use crate::api::cache::{CachePolicy, get_or_fetch_with_parser};
 
 const NOMINATIM_URL: &str = "https://nominatim.openstreetmap.org/search";
 const USER_AGENT: &str = "mapto3d/0.1.0 (https://github.com/shantanugoel/mapto3d)";
@@ -15,22 +15,6 @@ struct NominatimResult {
     lon: String,
     #[allow(dead_code)]
     display_name: String,
-}
-
-/// Geocode a city name to latitude/longitude coordinates.
-///
-/// Uses the Nominatim API to convert "{city}, {country}" to (lat, lon).
-/// Includes a 1 second delay for rate limiting (Nominatim ToS).
-///
-/// # Arguments
-/// * `city` - City name (e.g., "San Francisco")
-/// * `country` - Country name (e.g., "USA")
-///
-/// # Returns
-/// * `Ok((lat, lon))` - Coordinates as f64 tuple
-/// * `Err` - If city not found or API error
-pub fn geocode_city(city: &str, country: &str) -> Result<(f64, f64)> {
-    geocode_city_with_cache(city, country, &CachePolicy::default())
 }
 
 pub fn geocode_city_with_cache(
@@ -52,11 +36,13 @@ where
 {
     let query = format!("{}, {}", city.trim(), country.trim());
     let request_payload = cache_request_payload(city, country);
-    let payload = get_or_fetch_payload(cache_policy, CACHE_NAMESPACE, &request_payload, || {
-        fetcher(&query)
-    })?;
-
-    parse_coords_from_payload(&payload, city, country)
+    get_or_fetch_with_parser(
+        cache_policy,
+        CACHE_NAMESPACE,
+        &request_payload,
+        || fetcher(&query),
+        |payload| parse_coords_from_payload(payload, city, country),
+    )
 }
 
 fn fetch_nominatim_payload(query: &str) -> Result<String> {

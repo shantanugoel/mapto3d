@@ -168,6 +168,122 @@ pub fn store(
     Ok(())
 }
 
+pub fn invalidate(policy: &CachePolicy, namespace: &str, request_payload: &str) -> Result<()> {
+    if !policy.enabled {
+        return Ok(());
+    }
+
+    let path = cache_path(&policy.cache_dir, namespace, request_payload);
+    if path.exists() {
+        fs::remove_file(&path)
+            .with_context(|| format!("Failed to delete cache entry {}", path.display()))?;
+    }
+    Ok(())
+}
+
+pub fn get_or_fetch_with_parser<T, F, P>(
+    policy: &CachePolicy,
+    namespace: &str,
+    request_payload: &str,
+    fetcher: F,
+    parser: P,
+) -> Result<T>
+where
+    F: FnOnce() -> Result<String>,
+    P: Fn(&str) -> Result<T>,
+{
+    if !policy.enabled {
+        eprintln!("Cache disabled; fetching from network for {}", namespace);
+        let payload = fetcher()?;
+        return parser(&payload);
+    }
+
+    let cached = lookup(policy, namespace, request_payload)?;
+    let mut fallback: Option<(T, CacheFreshness)> = None;
+
+    if let CacheLookup::Hit { payload, freshness } = &cached {
+        match parser(payload) {
+            Ok(parsed) => {
+                if !policy.refresh && *freshness == CacheFreshness::Fresh {
+                    eprintln!("Cache hit (fresh) for {}", namespace);
+                    return Ok(parsed);
+                }
+                fallback = Some((parsed, *freshness));
+            }
+            Err(err) => {
+                eprintln!(
+                    "Warning: failed to parse cached payload for {}: {}",
+                    namespace, err
+                );
+                if let Err(err) = invalidate(policy, namespace, request_payload) {
+                    eprintln!(
+                        "Warning: failed to delete cache entry for {}: {}",
+                        namespace, err
+                    );
+                }
+            }
+        }
+    }
+
+    match fetcher_with_notice(cache_policy_notice(namespace, &cached, policy.refresh), fetcher) {
+        Ok(payload) => {
+            let parsed = parser(&payload)?;
+            if let Err(err) = store(policy, namespace, request_payload, &payload) {
+                eprintln!("Warning: failed to update cache for {}: {}", namespace, err);
+            }
+            Ok(parsed)
+        }
+        Err(network_err) => match fallback {
+            Some((parsed, freshness)) => {
+                let cache_kind = match freshness {
+                    CacheFreshness::Fresh => "fresh",
+                    CacheFreshness::Stale => "stale",
+                };
+                eprintln!(
+                    "Warning: network request failed ({}); using {} cache for {}",
+                    network_err, cache_kind, namespace
+                );
+                Ok(parsed)
+            }
+            None => Err(network_err),
+        },
+    }
+}
+
+fn cache_policy_notice(
+    namespace: &str,
+    cached: &CacheLookup,
+    refresh: bool,
+) -> Option<String> {
+    let notice = match cached {
+        CacheLookup::Miss => format!("Cache miss; fetching from network for {namespace}"),
+        CacheLookup::Hit { freshness, .. } => {
+            let cache_state = match freshness {
+                CacheFreshness::Fresh => "fresh",
+                CacheFreshness::Stale => "stale",
+            };
+            if refresh {
+                format!(
+                    "Cache hit ({cache_state}); refresh enabled, fetching from network for {namespace}"
+                )
+            } else {
+                format!("Cache hit ({cache_state}); fetching from network for {namespace}")
+            }
+        }
+    };
+    Some(notice)
+}
+
+fn fetcher_with_notice<F>(notice: Option<String>, fetcher: F) -> Result<String>
+where
+    F: FnOnce() -> Result<String>,
+{
+    if let Some(message) = notice {
+        eprintln!("{}", message);
+    }
+    fetcher()
+}
+
 pub fn get_or_fetch_payload<F>(
     policy: &CachePolicy,
     namespace: &str,
@@ -177,42 +293,9 @@ pub fn get_or_fetch_payload<F>(
 where
     F: FnOnce() -> Result<String>,
 {
-    if !policy.enabled {
-        return fetcher();
-    }
-
-    let cached = lookup(policy, namespace, request_payload)?;
-    if !policy.refresh
-        && let CacheLookup::Hit {
-            payload,
-            freshness: CacheFreshness::Fresh,
-        } = &cached
-    {
-        return Ok(payload.clone());
-    }
-
-    match fetcher() {
-        Ok(payload) => {
-            if let Err(err) = store(policy, namespace, request_payload, &payload) {
-                eprintln!("Warning: failed to update cache for {}: {}", namespace, err);
-            }
-            Ok(payload)
-        }
-        Err(network_err) => match cached {
-            CacheLookup::Hit { payload, freshness } => {
-                let cache_kind = match freshness {
-                    CacheFreshness::Fresh => "fresh",
-                    CacheFreshness::Stale => "stale",
-                };
-                eprintln!(
-                    "Warning: network request failed ({}); using {} cache for {}",
-                    network_err, cache_kind, namespace
-                );
-                Ok(payload)
-            }
-            CacheLookup::Miss => Err(network_err),
-        },
-    }
+    get_or_fetch_with_parser(policy, namespace, request_payload, fetcher, |payload| {
+        Ok(payload.to_string())
+    })
 }
 
 fn cache_path(cache_dir: &Path, namespace: &str, payload: &str) -> PathBuf {
@@ -318,5 +401,42 @@ mod tests {
         .unwrap();
 
         assert_eq!(payload, "cached");
+    }
+
+    #[test]
+    fn test_get_or_fetch_with_parser_replaces_bad_cache() {
+        let temp = tempfile::tempdir().unwrap();
+        let cache_dir = temp.path().to_path_buf();
+        let policy = CachePolicy::new(true, false, 24 * 60 * 60, Some(cache_dir.clone()));
+        let request = "data=query";
+
+        let bad_entry = CacheEnvelope {
+            schema_version: SCHEMA_VERSION,
+            created_at_unix: unix_now(),
+            payload: "bad".to_string(),
+        };
+        let bad_path = cache_path(&cache_dir, "overpass", request);
+        fs::create_dir_all(bad_path.parent().unwrap()).unwrap();
+        fs::write(&bad_path, serde_json::to_string(&bad_entry).unwrap()).unwrap();
+
+        let parsed = get_or_fetch_with_parser(
+            &policy,
+            "overpass",
+            request,
+            || Ok("good".to_string()),
+            |payload| {
+                if payload == "good" {
+                    Ok(42)
+                } else {
+                    anyhow::bail!("invalid payload")
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(parsed, 42);
+
+        let lookup = lookup(&policy, "overpass", request).unwrap();
+        assert!(matches!(lookup, CacheLookup::Hit { .. }));
     }
 }

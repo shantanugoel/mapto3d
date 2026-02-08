@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::api::cache::{CachePolicy, get_or_fetch_payload};
+use crate::api::cache::{CachePolicy, get_or_fetch_with_parser};
 use crate::config::OverpassConfig;
 
 const USER_AGENT: &str = "mapto3d/0.1.0 (https://github.com/shantanugoel/mapto3d)";
@@ -161,14 +161,6 @@ out skel qt;"#,
 /// - water=* (generic water tag)
 /// - landuse=reservoir/basin (man-made water storage)
 /// - natural=wetland (swamps, marshes)
-pub fn fetch_water(
-    center: (f64, f64),
-    radius_m: u32,
-    config: &OverpassConfig,
-) -> Result<OverpassResponse> {
-    fetch_water_with_cache(center, radius_m, config, &CachePolicy::default())
-}
-
 pub fn fetch_water_with_cache(
     center: (f64, f64),
     radius_m: u32,
@@ -205,14 +197,6 @@ out skel qt;"#,
 /// - leisure=park/garden/nature_reserve/recreation_ground
 /// - landuse=grass/meadow/forest
 /// - natural=wood/grassland (natural vegetation)
-pub fn fetch_parks(
-    center: (f64, f64),
-    radius_m: u32,
-    config: &OverpassConfig,
-) -> Result<OverpassResponse> {
-    fetch_parks_with_cache(center, radius_m, config, &CachePolicy::default())
-}
-
 pub fn fetch_parks_with_cache(
     center: (f64, f64),
     radius_m: u32,
@@ -266,13 +250,15 @@ where
     F: FnOnce(&str, &OverpassConfig) -> Result<String>,
 {
     let request_payload = cache_request_payload(query);
-    let payload = get_or_fetch_payload(cache_policy, cache_namespace, &request_payload, || {
-        fetcher(query, config)
-    })?;
-
-    let result: OverpassResponse =
-        serde_json::from_str(&payload).context("Failed to parse Overpass JSON response")?;
-    Ok(result)
+    get_or_fetch_with_parser(
+        cache_policy,
+        cache_namespace,
+        &request_payload,
+        || fetcher(query, config),
+        |payload| {
+            serde_json::from_str(payload).context("Failed to parse Overpass JSON response")
+        },
+    )
 }
 
 fn fetch_overpass_payload(query: &str, config: &OverpassConfig) -> Result<String> {
