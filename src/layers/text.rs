@@ -1,8 +1,14 @@
-use crate::mesh::{Triangle, extrude_ribbon_ex};
+use crate::mesh::{Triangle, extrude_polygon_ex, extrude_ribbon_ex};
+
+use geo::{Contains, CoordsIter, LineString, MultiPolygon, Point, Polygon};
+use geo_clipper::Clipper;
 
 use std::path::Path;
 
 const CURVE_SUBDIVISIONS: u8 = 20;
+const EMBEDDED_ROBOTO_SERIF: &[u8] = include_bytes!("../../fonts/RobotoSerif.ttf");
+const CONTOUR_POINT_EPSILON: f32 = 1e-5;
+const CLIPPER_PRECISION_FACTOR: f64 = 1000.0;
 
 pub struct TtfTextRenderer {
     font_data: Vec<u8>,
@@ -12,16 +18,7 @@ pub struct TtfTextRenderer {
 impl TtfTextRenderer {
     pub fn load(font_path: &Path, extrude_height: f32) -> Option<Self> {
         let font_data = std::fs::read(font_path).ok()?;
-        let face = fontmesh::Face::parse(&font_data, 0).ok()?;
-
-        if fontmesh::char_to_mesh_3d(&face, 'A', 1.0, 8).is_err() {
-            return None;
-        }
-
-        Some(Self {
-            font_data,
-            extrude_height,
-        })
+        Self::load_from_bytes(font_data, extrude_height)
     }
 
     pub fn load_default(extrude_height: f32) -> Option<Self> {
@@ -36,11 +33,23 @@ impl TtfTextRenderer {
                 return Some(renderer);
             }
         }
-        None
+        Self::load_from_bytes(EMBEDDED_ROBOTO_SERIF.to_vec(), extrude_height)
     }
 
     fn face(&self) -> fontmesh::Face<'_> {
         fontmesh::Face::parse(&self.font_data, 0).unwrap()
+    }
+
+    fn load_from_bytes(font_data: Vec<u8>, extrude_height: f32) -> Option<Self> {
+        let face = fontmesh::Face::parse(&font_data, 0).ok()?;
+        if fontmesh::char_to_mesh_3d(&face, 'A', 1.0, 8).is_err() {
+            return None;
+        }
+
+        Some(Self {
+            font_data,
+            extrude_height,
+        })
     }
 
     pub fn text_width(&self, text: &str, scale: f32) -> f32 {
@@ -69,48 +78,10 @@ impl TtfTextRenderer {
                 continue;
             }
 
-            if let Ok(mesh) =
-                fontmesh::char_to_mesh_3d(&face, ch, self.extrude_height, CURVE_SUBDIVISIONS)
+            if let Some(glyph_triangles) =
+                self.render_glyph(&face, ch, cursor_x, y, z, scale, self.extrude_height)
             {
-                let z_offset = self.extrude_height / 2.0;
-                for tri_indices in mesh.indices.chunks(3) {
-                    if tri_indices.len() < 3 {
-                        continue;
-                    }
-                    let i0 = tri_indices[0] as usize;
-                    let i1 = tri_indices[1] as usize;
-                    let i2 = tri_indices[2] as usize;
-
-                    if i0 >= mesh.vertices.len()
-                        || i1 >= mesh.vertices.len()
-                        || i2 >= mesh.vertices.len()
-                    {
-                        continue;
-                    }
-
-                    let v0 = mesh.vertices[i0];
-                    let v1 = mesh.vertices[i1];
-                    let v2 = mesh.vertices[i2];
-
-                    let tri = Triangle::new(
-                        [
-                            cursor_x + v0[0] * scale,
-                            y + v0[1] * scale,
-                            z + v0[2] + z_offset,
-                        ],
-                        [
-                            cursor_x + v1[0] * scale,
-                            y + v1[1] * scale,
-                            z + v1[2] + z_offset,
-                        ],
-                        [
-                            cursor_x + v2[0] * scale,
-                            y + v2[1] * scale,
-                            z + v2[2] + z_offset,
-                        ],
-                    );
-                    triangles.push(tri);
-                }
+                triangles.extend(glyph_triangles);
             }
 
             if let Some(advance) = fontmesh::glyph_advance(&face, ch) {
@@ -119,6 +90,89 @@ impl TtfTextRenderer {
         }
 
         triangles
+    }
+
+    fn render_glyph(
+        &self,
+        face: &fontmesh::Face<'_>,
+        ch: char,
+        cursor_x: f32,
+        y: f32,
+        z: f32,
+        scale: f32,
+        depth: f32,
+    ) -> Option<Vec<Triangle>> {
+        let glyph = fontmesh::Glyph::new(face, ch).ok()?;
+        let outline = glyph
+            .with_subdivisions(CURVE_SUBDIVISIONS)
+            .to_outline()
+            .ok()?;
+
+        let mut rings: Vec<GlyphRing> = outline
+            .contours
+            .iter()
+            .filter_map(|contour| contour_to_ring(contour, cursor_x, y, scale))
+            .filter_map(|points| {
+                let polygon = ring_to_polygon(&points)?;
+                Some(GlyphRing {
+                    area_abs: signed_area(&points).abs() as f64,
+                    points,
+                    polygon,
+                    parent: None,
+                    depth: 0,
+                })
+            })
+            .collect();
+
+        if rings.is_empty() {
+            return None;
+        }
+
+        assign_ring_hierarchy(&mut rings);
+
+        let max_depth = rings.iter().map(|ring| ring.depth).max().unwrap_or(0);
+        let mut merged = MultiPolygon::new(vec![]);
+        for depth in 0..=max_depth {
+            let depth_polygons: Vec<Polygon<f64>> = rings
+                .iter()
+                .filter(|ring| ring.depth == depth)
+                .map(|ring| ring.polygon.clone())
+                .collect();
+
+            let Some(layer_union) = union_polygon_layer(depth_polygons) else {
+                continue;
+            };
+
+            if depth % 2 == 0 {
+                merged = union_multi_polygon(merged, layer_union);
+            } else {
+                merged = difference_multi_polygon(merged, layer_union);
+            }
+        }
+
+        if merged.0.is_empty() {
+            return None;
+        }
+
+        let z_top = z + depth;
+        let mut triangles = Vec::new();
+        for polygon in merged.0 {
+            let outer = line_string_to_ring(polygon.exterior(), false);
+            if outer.len() < 3 {
+                continue;
+            }
+
+            let holes: Vec<Vec<(f32, f32)>> = polygon
+                .interiors()
+                .iter()
+                .map(|ring| line_string_to_ring(ring, true))
+                .filter(|ring| ring.len() >= 3)
+                .collect();
+
+            triangles.extend(extrude_polygon_ex(&outer, &holes, z, z_top, true));
+        }
+
+        Some(triangles)
     }
 
     pub fn render_text_centered(
@@ -148,6 +202,217 @@ impl TtfTextRenderer {
             1.0
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct GlyphRing {
+    points: Vec<(f32, f32)>,
+    polygon: Polygon<f64>,
+    area_abs: f64,
+    parent: Option<usize>,
+    depth: usize,
+}
+
+fn contour_to_ring(
+    contour: &fontmesh::types::Contour,
+    cursor_x: f32,
+    y: f32,
+    scale: f32,
+) -> Option<Vec<(f32, f32)>> {
+    if !contour.closed || contour.points.len() < 3 {
+        return None;
+    }
+
+    let mut points = Vec::with_capacity(contour.points.len());
+    for contour_point in &contour.points {
+        let px = cursor_x + contour_point.point[0] * scale;
+        let py = y + contour_point.point[1] * scale;
+        let current = (px, py);
+
+        if points
+            .last()
+            .is_some_and(|&last| points_are_close(last, current))
+        {
+            continue;
+        }
+        points.push(current);
+    }
+
+    if points.len() < 3 {
+        return None;
+    }
+
+    if points_are_close(*points.first().unwrap(), *points.last().unwrap()) {
+        points.pop();
+    }
+    points = clean_ring(points);
+    if points.len() < 3 {
+        return None;
+    }
+
+    Some(points)
+}
+
+fn ring_to_polygon(points: &[(f32, f32)]) -> Option<Polygon<f64>> {
+    if points.len() < 3 {
+        return None;
+    }
+
+    let mut coords: Vec<geo::Coord<f64>> = points
+        .iter()
+        .map(|&(x, y)| geo::coord! { x: x as f64, y: y as f64 })
+        .collect();
+    coords.push(*coords.first().unwrap());
+    Some(Polygon::new(LineString::from(coords), vec![]))
+}
+
+fn assign_ring_hierarchy(rings: &mut [GlyphRing]) {
+    let ring_count = rings.len();
+    let mut parents = vec![None; ring_count];
+
+    for i in 0..ring_count {
+        let probe = Point::new(rings[i].points[0].0 as f64, rings[i].points[0].1 as f64);
+        let mut best_parent: Option<(usize, f64)> = None;
+
+        for j in 0..ring_count {
+            if i == j {
+                continue;
+            }
+
+            if rings[j].polygon.contains(&probe) {
+                match best_parent {
+                    Some((_, best_area)) if rings[j].area_abs >= best_area => {}
+                    _ => best_parent = Some((j, rings[j].area_abs)),
+                }
+            }
+        }
+
+        parents[i] = best_parent.map(|(index, _)| index);
+    }
+
+    let mut depths = vec![0usize; ring_count];
+    for i in 0..ring_count {
+        let mut depth = 0usize;
+        let mut current = parents[i];
+        let mut guard = 0usize;
+        while let Some(parent_index) = current {
+            depth += 1;
+            current = parents[parent_index];
+            guard += 1;
+            if guard > ring_count {
+                break;
+            }
+        }
+        depths[i] = depth;
+    }
+
+    for i in 0..ring_count {
+        rings[i].parent = parents[i];
+        rings[i].depth = depths[i];
+    }
+}
+
+fn line_string_to_ring(ring: &LineString<f64>, expect_clockwise: bool) -> Vec<(f32, f32)> {
+    let mut points: Vec<(f32, f32)> = ring
+        .coords_iter()
+        .map(|coord| (coord.x as f32, coord.y as f32))
+        .collect();
+
+    if points.len() < 3 {
+        return Vec::new();
+    }
+
+    if points_are_close(*points.first().unwrap(), *points.last().unwrap()) {
+        points.pop();
+    }
+
+    points = clean_ring(points);
+    if points.len() < 3 {
+        return Vec::new();
+    }
+
+    orient_ring(points, expect_clockwise)
+}
+
+fn orient_ring(mut points: Vec<(f32, f32)>, expect_clockwise: bool) -> Vec<(f32, f32)> {
+    if is_clockwise(&points) != expect_clockwise {
+        points.reverse();
+    }
+    points
+}
+
+fn union_polygon_layer(polygons: Vec<Polygon<f64>>) -> Option<MultiPolygon<f64>> {
+    if polygons.is_empty() {
+        return None;
+    }
+
+    let mut merged = MultiPolygon::new(vec![polygons[0].clone()]);
+    for polygon in polygons.into_iter().skip(1) {
+        merged = merged.union(&polygon, CLIPPER_PRECISION_FACTOR);
+    }
+    Some(merged)
+}
+
+fn union_multi_polygon(mut base: MultiPolygon<f64>, layer: MultiPolygon<f64>) -> MultiPolygon<f64> {
+    if base.0.is_empty() {
+        return layer;
+    }
+
+    for polygon in layer.0 {
+        base = base.union(&polygon, CLIPPER_PRECISION_FACTOR);
+    }
+    base
+}
+
+fn difference_multi_polygon(
+    mut base: MultiPolygon<f64>,
+    subtract: MultiPolygon<f64>,
+) -> MultiPolygon<f64> {
+    if base.0.is_empty() || subtract.0.is_empty() {
+        return base;
+    }
+
+    for polygon in subtract.0 {
+        base = base.difference(&polygon, CLIPPER_PRECISION_FACTOR);
+    }
+    base
+}
+
+fn clean_ring(points: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+    let mut cleaned = Vec::with_capacity(points.len());
+    for point in points {
+        if cleaned
+            .last()
+            .is_some_and(|&previous| points_are_close(previous, point))
+        {
+            continue;
+        }
+        cleaned.push(point);
+    }
+
+    if cleaned.len() > 2 && points_are_close(*cleaned.first().unwrap(), *cleaned.last().unwrap()) {
+        cleaned.pop();
+    }
+
+    cleaned
+}
+
+fn is_clockwise(points: &[(f32, f32)]) -> bool {
+    signed_area(points) < 0.0
+}
+
+fn signed_area(points: &[(f32, f32)]) -> f32 {
+    let mut area = 0.0;
+    for i in 0..points.len() {
+        let (x1, y1) = points[i];
+        let (x2, y2) = points[(i + 1) % points.len()];
+        area += x1 * y2 - x2 * y1;
+    }
+    area * 0.5
+}
+
+fn points_are_close(a: (f32, f32), b: (f32, f32)) -> bool {
+    (a.0 - b.0).abs() < CONTOUR_POINT_EPSILON && (a.1 - b.1).abs() < CONTOUR_POINT_EPSILON
 }
 
 pub struct StrokeTextRenderer {
@@ -208,7 +473,7 @@ impl StrokeTextRenderer {
                         self.stroke_width,
                         self.extrude_height,
                         z,
-                        false,
+                        true,
                         true,
                     );
                     triangles.extend(ribbon);
@@ -611,6 +876,8 @@ fn get_char_strokes(ch: char) -> Vec<Vec<(f32, f32)>> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[test]
@@ -668,5 +935,187 @@ mod tests {
             !triangles.is_empty(),
             "TextRenderer should produce triangles"
         );
+    }
+
+    #[test]
+    fn test_ttf_text_topology_monaco() {
+        let renderer = TtfTextRenderer::load_default(4.4)
+            .expect("Embedded/default TTF should load for topology test");
+        let triangles = renderer.render_text_centered("MONACO", 100.0, 50.0, 0.0, 10.0);
+        let (boundary_edges, non_manifold_edges) = edge_topology_counts(&triangles);
+        assert_eq!(boundary_edges, 0);
+        assert_eq!(non_manifold_edges, 0);
+    }
+
+    #[test]
+    fn test_ttf_text_topology_coordinates() {
+        let renderer = TtfTextRenderer::load_default(4.4)
+            .expect("Embedded/default TTF should load for topology test");
+        let triangles = renderer.render_text_centered("43.7323N / 7.4277E", 100.0, 50.0, 0.0, 6.0);
+        let (boundary_edges, non_manifold_edges) = edge_topology_counts(&triangles);
+        assert_eq!(boundary_edges, 0);
+        assert_eq!(non_manifold_edges, 0);
+    }
+
+    #[test]
+    fn test_ttf_o_hole_not_filled() {
+        let renderer =
+            TtfTextRenderer::load_default(4.4).expect("Embedded/default TTF should load for test");
+        let triangles = renderer.render_text_centered("O", 0.0, 0.0, 0.0, 10.0);
+        assert!(!triangles.is_empty());
+
+        let mut min_x = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+        for triangle in &triangles {
+            for vertex in &triangle.vertices {
+                min_x = min_x.min(vertex[0]);
+                max_x = max_x.max(vertex[0]);
+                min_y = min_y.min(vertex[1]);
+                max_y = max_y.max(vertex[1]);
+            }
+        }
+
+        let center = ((min_x + max_x) * 0.5, (min_y + max_y) * 0.5);
+        let mut center_covered_on_top = false;
+        for triangle in &triangles {
+            let is_top_face = triangle.vertices.iter().all(|vertex| (vertex[2] - 4.4).abs() < 1e-3);
+            if !is_top_face {
+                continue;
+            }
+
+            let a = (triangle.vertices[0][0], triangle.vertices[0][1]);
+            let b = (triangle.vertices[1][0], triangle.vertices[1][1]);
+            let c = (triangle.vertices[2][0], triangle.vertices[2][1]);
+            if point_in_triangle_2d(center, a, b, c) {
+                center_covered_on_top = true;
+                break;
+            }
+        }
+
+        assert!(
+            !center_covered_on_top,
+            "Center of O should remain a hole on top surface"
+        );
+    }
+
+    #[test]
+    fn test_ttf_monaco_word_o_holes_not_filled() {
+        let text = "MONACO";
+        let text_z_top = 3.2;
+        let renderer = TtfTextRenderer::load_default(text_z_top)
+            .expect("Embedded/default TTF should load for MONACO hole regression");
+        let face = renderer.face();
+
+        let size_mm = 220.0;
+        let target_width = size_mm * 0.75;
+        let scale = renderer.calculate_scale_for_width(text, target_width);
+        let center_x = size_mm * 0.5;
+        let y = 12.0 * (size_mm / 220.0);
+        let text_width = renderer.text_width(text, scale);
+        let start_x = center_x - text_width * 0.5;
+        let all_triangles = renderer.render_text(text, start_x, y, 0.0, scale);
+        assert!(!all_triangles.is_empty());
+
+        let mut cursor_x = start_x;
+        let mut o_centers = Vec::new();
+        for ch in text.chars() {
+            if ch == 'O'
+                && let Some(glyph_triangles) =
+                    renderer.render_glyph(&face, ch, cursor_x, y, 0.0, scale, text_z_top)
+            {
+                let mut min_x = f32::INFINITY;
+                let mut max_x = f32::NEG_INFINITY;
+                let mut min_y = f32::INFINITY;
+                let mut max_y = f32::NEG_INFINITY;
+                for triangle in &glyph_triangles {
+                    for vertex in &triangle.vertices {
+                        min_x = min_x.min(vertex[0]);
+                        max_x = max_x.max(vertex[0]);
+                        min_y = min_y.min(vertex[1]);
+                        max_y = max_y.max(vertex[1]);
+                    }
+                }
+                o_centers.push(((min_x + max_x) * 0.5, (min_y + max_y) * 0.5));
+            }
+
+            if let Some(advance) = fontmesh::glyph_advance(&face, ch) {
+                cursor_x += advance * scale;
+            }
+        }
+
+        assert_eq!(o_centers.len(), 2, "MONACO should produce two O centers");
+
+        for center in o_centers {
+            assert!(
+                !top_face_contains_point(&all_triangles, center, text_z_top),
+                "MONACO O center should remain a hole on the top surface"
+            );
+        }
+    }
+
+    fn edge_topology_counts(triangles: &[Triangle]) -> (usize, usize) {
+        let mut counts: HashMap<((i64, i64, i64), (i64, i64, i64)), usize> = HashMap::new();
+
+        for triangle in triangles {
+            let vertices = triangle.vertices.map(quantize_vertex);
+            for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+                let edge = ordered_edge(vertices[a], vertices[b]);
+                *counts.entry(edge).or_insert(0) += 1;
+            }
+        }
+
+        let boundary_edges = counts.values().filter(|&&count| count == 1).count();
+        let non_manifold_edges = counts.values().filter(|&&count| count > 2).count();
+        (boundary_edges, non_manifold_edges)
+    }
+
+    fn quantize_vertex(vertex: [f32; 3]) -> (i64, i64, i64) {
+        const SCALE: f32 = 10_000.0;
+        (
+            (vertex[0] * SCALE).round() as i64,
+            (vertex[1] * SCALE).round() as i64,
+            (vertex[2] * SCALE).round() as i64,
+        )
+    }
+
+    fn ordered_edge(a: (i64, i64, i64), b: (i64, i64, i64)) -> ((i64, i64, i64), (i64, i64, i64)) {
+        if a <= b { (a, b) } else { (b, a) }
+    }
+
+    fn point_in_triangle_2d(
+        p: (f32, f32),
+        a: (f32, f32),
+        b: (f32, f32),
+        c: (f32, f32),
+    ) -> bool {
+        fn sign(p1: (f32, f32), p2: (f32, f32), p3: (f32, f32)) -> f32 {
+            (p1.0 - p3.0) * (p2.1 - p3.1) - (p2.0 - p3.0) * (p1.1 - p3.1)
+        }
+
+        let d1 = sign(p, a, b);
+        let d2 = sign(p, b, c);
+        let d3 = sign(p, c, a);
+        let has_neg = d1 < 0.0 || d2 < 0.0 || d3 < 0.0;
+        let has_pos = d1 > 0.0 || d2 > 0.0 || d3 > 0.0;
+        !(has_neg && has_pos)
+    }
+
+    fn top_face_contains_point(triangles: &[Triangle], p: (f32, f32), top_z: f32) -> bool {
+        triangles.iter().any(|triangle| {
+            let is_top_face = triangle
+                .vertices
+                .iter()
+                .all(|vertex| (vertex[2] - top_z).abs() < 1e-3);
+            if !is_top_face {
+                return false;
+            }
+
+            let a = (triangle.vertices[0][0], triangle.vertices[0][1]);
+            let b = (triangle.vertices[1][0], triangle.vertices[1][1]);
+            let c = (triangle.vertices[2][0], triangle.vertices[2][1]);
+            point_in_triangle_2d(p, a, b, c)
+        })
     }
 }

@@ -2,6 +2,7 @@
 name = "mapto3d"
 version = "0.1.1"
 edition = "2024"
+default-run = "mapto3d"
 description = "Generate 3D-printable STL city maps from OpenStreetMap data"
 license = "MIT"
 repository = "https://github.com/shantanugoel/mapto3d"

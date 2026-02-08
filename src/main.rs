@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -107,6 +108,10 @@ struct Args {
     /// Path to TTF font file for text rendering (defaults to fonts/RobotoSerif.ttf)
     #[arg(long)]
     font: Option<PathBuf>,
+
+    /// Disable topology-based fallback to stroke text and force primary TTF text rendering
+    #[arg(long)]
+    no_text_fallback: bool,
 
     /// Enable water features (rivers, lakes, sea)
     #[arg(long)]
@@ -408,6 +413,7 @@ fn main() -> Result<()> {
         secondary_text.as_deref(),
         font_path.as_deref(),
         feature_heights.text_z_top,
+        !args.no_text_fallback,
     );
     if verbose {
         println!("  Text: {} triangles", text_triangles.len());
@@ -599,12 +605,57 @@ fn generate_text_layer(
     secondary_text: Option<&str>,
     font_path: Option<&std::path::Path>,
     text_z_top: f32,
+    allow_fallback: bool,
 ) -> Vec<mesh::Triangle> {
-    let mut triangles = Vec::new();
-
     let text_z = 0.0;
     let renderer = TextRenderer::new(font_path, text_z_top);
+    let mut triangles = render_text_triangles(
+        &renderer,
+        city,
+        coords,
+        size_mm,
+        primary_text,
+        secondary_text,
+        text_z,
+    );
 
+    let (boundary_edges, non_manifold_edges) = edge_topology_counts(&triangles);
+    if allow_fallback && (boundary_edges > 0 || non_manifold_edges > 0) {
+        let fallback_renderer =
+            layers::text::TextRenderer::Stroke(layers::text::StrokeTextRenderer::new(text_z_top));
+        let fallback_triangles = render_text_triangles(
+            &fallback_renderer,
+            city,
+            coords,
+            size_mm,
+            primary_text,
+            secondary_text,
+            text_z,
+        );
+        let fallback_metrics = edge_topology_counts(&fallback_triangles);
+
+        if fallback_metrics.0 + fallback_metrics.1 <= boundary_edges + non_manifold_edges {
+            eprintln!(
+                "Warning: text mesh from TTF had topology issues ({} boundary, {} non-manifold edges); using stroke fallback",
+                boundary_edges, non_manifold_edges
+            );
+            triangles = fallback_triangles;
+        }
+    }
+
+    triangles
+}
+
+fn render_text_triangles(
+    renderer: &TextRenderer,
+    city: &str,
+    coords: (f64, f64),
+    size_mm: f32,
+    primary_text: Option<&str>,
+    secondary_text: Option<&str>,
+    text_z: f32,
+) -> Vec<mesh::Triangle> {
+    let mut triangles = Vec::new();
     let primary = primary_text
         .map(|s| s.to_uppercase())
         .unwrap_or_else(|| city.to_uppercase());
@@ -639,6 +690,35 @@ fn generate_text_layer(
     ));
 
     triangles
+}
+
+fn edge_topology_counts(triangles: &[mesh::Triangle]) -> (usize, usize) {
+    let mut counts: HashMap<((i64, i64, i64), (i64, i64, i64)), usize> = HashMap::new();
+
+    for triangle in triangles {
+        let vertices = triangle.vertices.map(quantize_vertex);
+        for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+            let edge = ordered_edge(vertices[a], vertices[b]);
+            *counts.entry(edge).or_insert(0) += 1;
+        }
+    }
+
+    let boundary_edges = counts.values().filter(|&&count| count == 1).count();
+    let non_manifold_edges = counts.values().filter(|&&count| count > 2).count();
+    (boundary_edges, non_manifold_edges)
+}
+
+fn quantize_vertex(vertex: [f32; 3]) -> (i64, i64, i64) {
+    const SCALE: f32 = 10_000.0;
+    (
+        (vertex[0] * SCALE).round() as i64,
+        (vertex[1] * SCALE).round() as i64,
+        (vertex[2] * SCALE).round() as i64,
+    )
+}
+
+fn ordered_edge(a: (i64, i64, i64), b: (i64, i64, i64)) -> ((i64, i64, i64), (i64, i64, i64)) {
+    if a <= b { (a, b) } else { (b, a) }
 }
 
 fn create_spinner(message: &str) -> ProgressBar {

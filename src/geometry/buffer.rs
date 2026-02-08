@@ -103,7 +103,18 @@ pub fn buffer_polyline(
         return MultiPolygon::new(vec![]);
     }
 
-    let line_string: LineString<f64> = points
+    let closed = is_closed_loop(points);
+    let normalized_points = if closed {
+        points[..points.len() - 1].to_vec()
+    } else {
+        points.to_vec()
+    };
+
+    if normalized_points.len() < 2 {
+        return MultiPolygon::new(vec![]);
+    }
+
+    let line_string: LineString<f64> = normalized_points
         .iter()
         .map(|&(x, y)| geo::coord! { x: x, y: y })
         .collect();
@@ -113,12 +124,30 @@ pub fn buffer_polyline(
 
     let delta = width / 2.0;
 
+    let end_type = if closed {
+        EndType::ClosedLine
+    } else {
+        config.to_clipper_end_type()
+    };
+
     multi_line_string.offset(
         delta,
         config.to_clipper_join_type(),
-        config.to_clipper_end_type(),
+        end_type,
         config.precision_factor,
     )
+}
+
+fn is_closed_loop(points: &[(f64, f64)]) -> bool {
+    if points.len() < 3 {
+        return false;
+    }
+
+    let first = points.first().unwrap();
+    let last = points.last().unwrap();
+    let dx = first.0 - last.0;
+    let dy = first.1 - last.1;
+    (dx * dx + dy * dy) < 1e-10
 }
 
 /// Buffer multiple polylines and return all resulting polygons
@@ -140,6 +169,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use geo::{Contains, Point};
 
     #[test]
     fn test_buffer_diagonal_line() {
@@ -203,5 +233,28 @@ mod tests {
                 join_style
             );
         }
+    }
+
+    #[test]
+    fn test_buffer_closed_loop_keeps_hole() {
+        let points = vec![
+            (0.0, 0.0),
+            (10.0, 0.0),
+            (10.0, 10.0),
+            (0.0, 10.0),
+            (0.0, 0.0),
+        ];
+        let config = BufferConfig::for_roads();
+        let result = buffer_polyline(&points, 2.0, &config);
+
+        assert!(
+            !result.0.is_empty(),
+            "Closed loop should produce buffered polygon"
+        );
+        let center = Point::new(5.0, 5.0);
+        assert!(
+            !result.contains(&center),
+            "Buffered closed loop should not fill interior region"
+        );
     }
 }

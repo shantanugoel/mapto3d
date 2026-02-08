@@ -1,6 +1,9 @@
+use geo::{CoordsIter, LineString};
+
 use crate::domain::{RoadClass, RoadSegment};
-use crate::geometry::{simplify_polyline, Projector, Scaler};
-use crate::mesh::{extrude_ribbon_ex, Triangle};
+use crate::geometry::simplify::simplify_polyline;
+use crate::geometry::{BufferConfig, Projector, Scaler, buffer_polyline, union_polygons_batched};
+use crate::mesh::{Triangle, extrude_polygon_ex};
 
 #[derive(Debug, Clone)]
 pub struct RoadConfig {
@@ -103,6 +106,9 @@ impl RoadConfig {
     }
 }
 
+const ROAD_UNION_BATCH_SIZE: usize = 500;
+const POINT_EPSILON: f32 = 1e-4;
+
 /// Generate mesh triangles for all road segments
 ///
 /// # Arguments
@@ -119,7 +125,37 @@ pub fn generate_road_meshes(
     scaler: &Scaler,
     config: &RoadConfig,
 ) -> Vec<Triangle> {
+    let road_polygons = build_road_polygons(roads, projector, scaler, config);
     let mut all_triangles = Vec::new();
+
+    for polygon in road_polygons.0 {
+        let outer = line_string_to_ring(polygon.exterior(), false);
+        if outer.len() < 3 {
+            continue;
+        }
+
+        let holes: Vec<Vec<(f32, f32)>> = polygon
+            .interiors()
+            .iter()
+            .map(|ring| line_string_to_ring(ring, true))
+            .filter(|ring| ring.len() >= 3)
+            .collect();
+
+        let triangles = extrude_polygon_ex(&outer, &holes, 0.0, config.z_top, true);
+        all_triangles.extend(triangles);
+    }
+
+    all_triangles
+}
+
+fn build_road_polygons(
+    roads: &[RoadSegment],
+    projector: &Projector,
+    scaler: &Scaler,
+    config: &RoadConfig,
+) -> geo::MultiPolygon<f64> {
+    let buffer_config = BufferConfig::for_roads();
+    let mut road_polygons = Vec::new();
 
     for road in roads {
         let points_to_use = if let Some(epsilon) = config.simplification_epsilon(road.class) {
@@ -141,19 +177,112 @@ pub fn generate_road_meshes(
             .collect();
 
         let scaled: Vec<(f32, f32)> = projected.iter().map(|&(x, y)| scaler.scale(x, y)).collect();
+        let scaled_polyline = clean_polyline(&scaled);
+        if scaled_polyline.len() < 2 {
+            continue;
+        }
 
         let width = config.get_width(road.class);
-
-        let triangles = extrude_ribbon_ex(&scaled, width, config.z_top, 0.0, true, true);
-        all_triangles.extend(triangles);
+        let buffered = buffer_polyline(&scaled_polyline, width as f64, &buffer_config);
+        road_polygons.extend(buffered.0);
     }
 
-    all_triangles
+    if road_polygons.is_empty() {
+        return geo::MultiPolygon::new(vec![]);
+    }
+
+    union_polygons_batched(road_polygons, ROAD_UNION_BATCH_SIZE)
+}
+
+fn clean_polyline(points: &[(f32, f32)]) -> Vec<(f64, f64)> {
+    let mut cleaned: Vec<(f64, f64)> = Vec::with_capacity(points.len());
+
+    for &(x, y) in points {
+        let current = (x as f64, y as f64);
+        let is_duplicate = cleaned.last().is_some_and(|&(px, py)| {
+            (px - current.0).abs() < POINT_EPSILON as f64
+                && (py - current.1).abs() < POINT_EPSILON as f64
+        });
+
+        if !is_duplicate {
+            cleaned.push(current);
+        }
+    }
+
+    cleaned
+}
+
+fn line_string_to_ring(ring: &LineString<f64>, expect_clockwise: bool) -> Vec<(f32, f32)> {
+    let mut points: Vec<(f32, f32)> = ring
+        .coords_iter()
+        .map(|coord| (coord.x as f32, coord.y as f32))
+        .collect();
+
+    if points.len() < 3 {
+        return Vec::new();
+    }
+
+    if points_are_close(*points.first().unwrap(), *points.last().unwrap()) {
+        points.pop();
+    }
+
+    points = clean_ring(points);
+    if points.len() < 3 {
+        return Vec::new();
+    }
+
+    if is_clockwise(&points) != expect_clockwise {
+        points.reverse();
+    }
+
+    points
+}
+
+fn clean_ring(points: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+    let mut cleaned = Vec::with_capacity(points.len());
+    for point in points {
+        let is_duplicate = cleaned
+            .last()
+            .is_some_and(|&previous| points_are_close(previous, point));
+        if !is_duplicate {
+            cleaned.push(point);
+        }
+    }
+
+    if cleaned.len() > 2 && points_are_close(*cleaned.first().unwrap(), *cleaned.last().unwrap()) {
+        cleaned.pop();
+    }
+
+    cleaned
+}
+
+fn is_clockwise(points: &[(f32, f32)]) -> bool {
+    signed_area(points) < 0.0
+}
+
+fn signed_area(points: &[(f32, f32)]) -> f32 {
+    let mut area = 0.0;
+    for i in 0..points.len() {
+        let (x1, y1) = points[i];
+        let (x2, y2) = points[(i + 1) % points.len()];
+        area += x1 * y2 - x2 * y1;
+    }
+    area * 0.5
+}
+
+fn points_are_close(a: (f32, f32), b: (f32, f32)) -> bool {
+    (a.0 - b.0).abs() < POINT_EPSILON && (a.1 - b.1).abs() < POINT_EPSILON
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use geo::{Contains, Point};
+
     use super::*;
+    use crate::domain::RoadSegment;
+    use crate::geometry::Bounds;
 
     #[test]
     fn test_road_config_width() {
@@ -186,5 +315,99 @@ mod tests {
         let config = RoadConfig::default();
         let w = config.get_width(RoadClass::Residential);
         assert!(w >= 0.6);
+    }
+
+    #[test]
+    fn test_closed_loop_roads_keep_hole() {
+        let roads = vec![RoadSegment::new(
+            vec![
+                (0.0, 0.0),
+                (0.0, 0.003),
+                (0.003, 0.003),
+                (0.003, 0.0),
+                (0.0, 0.0),
+            ],
+            RoadClass::Tertiary,
+        )];
+
+        let projector = Projector::new((0.0015, 0.0015));
+        let projected_points: Vec<(f64, f64)> = roads
+            .iter()
+            .flat_map(|road| {
+                road.points
+                    .iter()
+                    .map(|&(lat, lon)| projector.project(lat, lon))
+            })
+            .collect();
+        let bounds = Bounds::from_points(&projected_points).unwrap();
+        let scaler = Scaler::from_bounds(&bounds, 220.0);
+
+        let polygons = build_road_polygons(&roads, &projector, &scaler, &RoadConfig::default());
+        assert!(!polygons.0.is_empty());
+
+        let center_projected = projector.project(0.0015, 0.0015);
+        let center_scaled = scaler.scale(center_projected.0, center_projected.1);
+        let center = Point::new(center_scaled.0 as f64, center_scaled.1 as f64);
+
+        assert!(
+            !polygons.contains(&center),
+            "Closed loop road should keep interior void"
+        );
+    }
+
+    #[test]
+    fn test_intersection_roads_are_manifold() {
+        let roads = vec![
+            RoadSegment::new(vec![(0.0, -0.003), (0.0, 0.003)], RoadClass::Primary),
+            RoadSegment::new(vec![(-0.003, 0.0), (0.003, 0.0)], RoadClass::Primary),
+        ];
+
+        let projector = Projector::new((0.0, 0.0));
+        let projected_points: Vec<(f64, f64)> = roads
+            .iter()
+            .flat_map(|road| {
+                road.points
+                    .iter()
+                    .map(|&(lat, lon)| projector.project(lat, lon))
+            })
+            .collect();
+        let bounds = Bounds::from_points(&projected_points).unwrap();
+        let scaler = Scaler::from_bounds(&bounds, 220.0);
+
+        let triangles = generate_road_meshes(&roads, &projector, &scaler, &RoadConfig::default());
+        let (boundary_edges, non_manifold_edges) = edge_counts(&triangles);
+
+        assert!(!triangles.is_empty());
+        assert_eq!(boundary_edges, 0);
+        assert_eq!(non_manifold_edges, 0);
+    }
+
+    fn edge_counts(triangles: &[Triangle]) -> (usize, usize) {
+        let mut counts: HashMap<((i64, i64, i64), (i64, i64, i64)), usize> = HashMap::new();
+
+        for triangle in triangles {
+            let vertices = triangle.vertices.map(quantize);
+            for (a, b) in [(0, 1), (1, 2), (2, 0)] {
+                let edge = ordered_edge(vertices[a], vertices[b]);
+                *counts.entry(edge).or_insert(0) += 1;
+            }
+        }
+
+        let boundary_edges = counts.values().filter(|&&count| count == 1).count();
+        let non_manifold_edges = counts.values().filter(|&&count| count > 2).count();
+        (boundary_edges, non_manifold_edges)
+    }
+
+    fn quantize(vertex: [f32; 3]) -> (i64, i64, i64) {
+        const SCALE: f32 = 10_000.0;
+        (
+            (vertex[0] * SCALE).round() as i64,
+            (vertex[1] * SCALE).round() as i64,
+            (vertex[2] * SCALE).round() as i64,
+        )
+    }
+
+    fn ordered_edge(a: (i64, i64, i64), b: (i64, i64, i64)) -> ((i64, i64, i64), (i64, i64, i64)) {
+        if a <= b { (a, b) } else { (b, a) }
     }
 }
