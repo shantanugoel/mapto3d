@@ -286,7 +286,12 @@ fn main() -> Result<()> {
 
     let bounds = Bounds::from_points(&all_projected_points).context("Failed to compute bounds from road points")?;
     let scaler = Scaler::from_bounds_fill_width(&bounds, size as f64, edge_margin_mm as f64);
-    let clip_rect = ClipRect::from_bounds(&bounds, &scaler);
+    let clip_rect = ClipRect {
+        min_x: 0.0,
+        max_x: size,
+        min_y: 0.0,
+        max_y: size,
+    };
     
     let spinner = create_spinner("Generating mesh layers...");
     let start = Instant::now();
@@ -297,7 +302,7 @@ fn main() -> Result<()> {
         .with_simplify_level(simplify)
         .with_z_top(feature_heights.road_z_top);
 
-    let road_footprint = build_road_polygons(&roads, &projector, &scaler, &road_config);
+    let road_footprint = build_road_polygons(&roads, &projector, &scaler, &clip_rect, &road_config);
     let water_footprint = if args.water { build_water_polygons(&water, &projector, &scaler, &clip_rect) } else { geo::MultiPolygon::new(vec![]) };
     let park_footprint = if args.parks { build_park_polygons(&parks, &projector, &scaler, &clip_rect) } else { geo::MultiPolygon::new(vec![]) };
     let text_output = generate_text_output(

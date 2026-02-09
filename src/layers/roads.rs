@@ -1,6 +1,9 @@
 use crate::domain::{RoadClass, RoadSegment};
 use crate::geometry::simplify::simplify_polyline;
-use crate::geometry::{BufferConfig, Projector, Scaler, buffer_polyline, line_string_to_ring, union_polygons_batched};
+use crate::geometry::{
+    BufferConfig, ClipRect, Projector, Scaler, buffer_polyline, clip_polygon_to_rect,
+    line_string_to_ring, union_polygons_batched,
+};
 use crate::mesh::{extrude_polygon_ex, Triangle};
 
 #[derive(Debug, Clone)]
@@ -121,9 +124,10 @@ pub fn generate_road_meshes(
     roads: &[RoadSegment],
     projector: &Projector,
     scaler: &Scaler,
+    clip_rect: &ClipRect,
     config: &RoadConfig,
 ) -> Vec<Triangle> {
-    let road_polygons = build_road_polygons(roads, projector, scaler, config);
+    let road_polygons = build_road_polygons(roads, projector, scaler, clip_rect, config);
     generate_road_meshes_from_polygons(&road_polygons, config.z_top)
 }
 
@@ -157,6 +161,7 @@ pub fn build_road_polygons(
     roads: &[RoadSegment],
     projector: &Projector,
     scaler: &Scaler,
+    clip_rect: &ClipRect,
     config: &RoadConfig,
 ) -> geo::MultiPolygon<f64> {
     let buffer_config = BufferConfig::for_roads();
@@ -196,7 +201,30 @@ pub fn build_road_polygons(
         return geo::MultiPolygon::new(vec![]);
     }
 
-    union_polygons_batched(road_polygons, ROAD_UNION_BATCH_SIZE)
+    let united = union_polygons_batched(road_polygons, ROAD_UNION_BATCH_SIZE);
+    clip_roads_to_bounds(&united, clip_rect)
+}
+
+fn clip_roads_to_bounds(roads: &geo::MultiPolygon<f64>, clip_rect: &ClipRect) -> geo::MultiPolygon<f64> {
+
+    let mut clipped_polygons = Vec::new();
+    for polygon in &roads.0 {
+        let outer = line_string_to_ring(polygon.exterior(), false);
+        if outer.len() < 3 {
+            continue;
+        }
+        let holes: Vec<Vec<(f32, f32)>> = polygon
+            .interiors()
+            .iter()
+            .map(|ring| line_string_to_ring(ring, true))
+            .filter(|ring| ring.len() >= 3)
+            .collect();
+
+        let clipped = clip_polygon_to_rect(&outer, &holes, clip_rect);
+        clipped_polygons.extend(clipped);
+    }
+
+    geo::MultiPolygon::new(clipped_polygons)
 }
 
 fn clean_polyline(points: &[(f32, f32)]) -> Vec<(f64, f64)> {
@@ -285,7 +313,13 @@ mod tests {
         let bounds = Bounds::from_points(&projected_points).unwrap();
         let scaler = Scaler::from_bounds_fill_width(&bounds, 220.0, 0.0);
 
-        let polygons = build_road_polygons(&roads, &projector, &scaler, &RoadConfig::default());
+        let clip_rect = ClipRect {
+            min_x: 0.0,
+            max_x: 220.0,
+            min_y: 0.0,
+            max_y: 220.0,
+        };
+        let polygons = build_road_polygons(&roads, &projector, &scaler, &clip_rect, &RoadConfig::default());
         assert!(!polygons.0.is_empty());
 
         let center_projected = projector.project(0.0015, 0.0015);
@@ -317,7 +351,13 @@ mod tests {
         let bounds = Bounds::from_points(&projected_points).unwrap();
         let scaler = Scaler::from_bounds_fill_width(&bounds, 220.0, 0.0);
 
-        let triangles = generate_road_meshes(&roads, &projector, &scaler, &RoadConfig::default());
+        let clip_rect = ClipRect {
+            min_x: 0.0,
+            max_x: 220.0,
+            min_y: 0.0,
+            max_y: 220.0,
+        };
+        let triangles = generate_road_meshes(&roads, &projector, &scaler, &clip_rect, &RoadConfig::default());
         let (boundary_edges, non_manifold_edges) = edge_counts(&triangles);
 
         assert!(!triangles.is_empty());
