@@ -5,60 +5,53 @@
 
 use geo::{MultiPolygon, Polygon};
 use geo_clipper::Clipper;
+use crate::geometry::CLIPPER_PRECISION_FACTOR;
 
-/// Union multiple polygons into a single MultiPolygon
-///
-/// Merges all overlapping polygons into a unified shape, eliminating
-/// z-fighting and non-manifold geometry at intersections.
 pub fn union_polygons(polygons: Vec<Polygon<f64>>) -> MultiPolygon<f64> {
-    if polygons.is_empty() {
-        return MultiPolygon::new(vec![]);
-    }
-
-    if polygons.len() == 1 {
-        return MultiPolygon::new(polygons);
-    }
-
-    let precision_factor = 1000.0;
-
-    let mut result = MultiPolygon::new(vec![polygons[0].clone()]);
-
-    for polygon in polygons.into_iter().skip(1) {
-        result = result.union(&polygon, precision_factor);
-    }
-
-    result
+    union_polygons_batched(polygons, 64)
 }
 
 /// Union polygons in batches for better performance with large datasets
 ///
-/// Processes polygons in groups to reduce complexity of individual
-/// union operations, then merges the batch results.
+/// Processes polygons using a binary tree merge strategy to keep individual
+/// operations as simple as possible.
 pub fn union_polygons_batched(polygons: Vec<Polygon<f64>>, batch_size: usize) -> MultiPolygon<f64> {
     if polygons.is_empty() {
         return MultiPolygon::new(vec![]);
     }
 
-    if polygons.len() <= batch_size {
-        return union_polygons(polygons);
-    }
+    let precision_factor = CLIPPER_PRECISION_FACTOR;
 
-    let precision_factor = 1000.0;
-    let mut batch_results: Vec<MultiPolygon<f64>> = Vec::new();
+    // First, process into initial MultiPolygons in chunks
+    let mut current_level: Vec<MultiPolygon<f64>> = polygons
+        .chunks(batch_size)
+        .map(|chunk| {
+            let mut batch_union = MultiPolygon::new(vec![chunk[0].clone()]);
+            for poly in chunk.iter().skip(1) {
+                batch_union = batch_union.union(poly, precision_factor);
+            }
+            batch_union
+        })
+        .collect();
 
-    for chunk in polygons.chunks(batch_size) {
-        let batch_union = union_polygons(chunk.to_vec());
-        batch_results.push(batch_union);
-    }
-
-    let mut final_result = batch_results.remove(0);
-    for batch in batch_results {
-        for polygon in batch.0 {
-            final_result = final_result.union(&polygon, precision_factor);
+    // Binary tree merge of the MultiPolygons
+    while current_level.len() > 1 {
+        let mut next_level = Vec::with_capacity((current_level.len() + 1) / 2);
+        for chunk in current_level.chunks(2) {
+            if chunk.len() == 2 {
+                let mut merged = chunk[0].clone();
+                for poly in &chunk[1].0 {
+                    merged = merged.union(poly, precision_factor);
+                }
+                next_level.push(merged);
+            } else {
+                next_level.push(chunk[0].clone());
+            }
         }
+        current_level = next_level;
     }
 
-    final_result
+    current_level.remove(0)
 }
 
 #[cfg(test)]

@@ -1,6 +1,8 @@
-use crate::mesh::{Triangle, extrude_polygon_ex, extrude_ribbon_ex};
+use crate::mesh::{Triangle, extrude_polygon_ex};
+use crate::geometry::buffer::{BufferCapStyle, BufferJoinStyle};
+use crate::geometry::{CLIPPER_PRECISION_FACTOR, line_string_to_ring};
 
-use geo::{CoordsIter, LineString, MultiPolygon, Polygon};
+use geo::{LineString, MultiPolygon, Polygon};
 use geo_clipper::Clipper;
 
 use std::path::Path;
@@ -8,7 +10,6 @@ use std::path::Path;
 const CURVE_SUBDIVISIONS: u8 = 20;
 const EMBEDDED_ROBOTO_SERIF: &[u8] = include_bytes!("../../fonts/RobotoSerif.ttf");
 const CONTOUR_POINT_EPSILON: f32 = 1e-5;
-const CLIPPER_PRECISION_FACTOR: f64 = 1000.0;
 
 pub struct TtfTextRenderer {
     font_data: Vec<u8>,
@@ -63,10 +64,10 @@ impl TtfTextRenderer {
         width
     }
 
-    pub fn render_text(&self, text: &str, x: f32, y: f32, z: f32, scale: f32) -> Vec<Triangle> {
+    pub fn render_text_polygons(&self, text: &str, x: f32, y: f32, scale: f32) -> MultiPolygon<f64> {
         let face = self.face();
-        let mut triangles = Vec::new();
         let mut cursor_x = x;
+        let mut all_merged = MultiPolygon::new(vec![]);
 
         for ch in text.chars() {
             if ch == ' ' {
@@ -78,8 +79,10 @@ impl TtfTextRenderer {
                 continue;
             }
 
-            if let Some(glyph_triangles) = self.render_glyph(&face, ch, cursor_x, y, z, scale) {
-                triangles.extend(glyph_triangles);
+            if let Some(merged) = self.render_glyph_polygon(&face, ch, cursor_x, y, scale) {
+                for poly in merged.0 {
+                    all_merged = all_merged.union(&poly, CLIPPER_PRECISION_FACTOR);
+                }
             }
 
             if let Some(advance) = fontmesh::glyph_advance(&face, ch) {
@@ -87,18 +90,17 @@ impl TtfTextRenderer {
             }
         }
 
-        triangles
+        all_merged
     }
 
-    fn render_glyph(
+    fn render_glyph_polygon(
         &self,
         face: &fontmesh::Face<'_>,
         ch: char,
         cursor_x: f32,
         y: f32,
-        z: f32,
         scale: f32,
-    ) -> Option<Vec<Triangle>> {
+    ) -> Option<MultiPolygon<f64>> {
         let glyph = fontmesh::Glyph::new(face, ch).ok()?;
         let outline = glyph
             .with_subdivisions(CURVE_SUBDIVISIONS)
@@ -149,6 +151,19 @@ impl TtfTextRenderer {
         if merged.0.is_empty() {
             return None;
         }
+        Some(merged)
+    }
+
+    fn render_glyph(
+        &self,
+        face: &fontmesh::Face<'_>,
+        ch: char,
+        cursor_x: f32,
+        y: f32,
+        z: f32,
+        scale: f32,
+    ) -> Option<Vec<Triangle>> {
+        let merged = self.render_glyph_polygon(face, ch, cursor_x, y, scale)?;
 
         let z_top = z + self.extrude_height;
         let mut triangles = Vec::new();
@@ -169,6 +184,33 @@ impl TtfTextRenderer {
         }
 
         Some(triangles)
+    }
+
+    pub fn render_text(&self, text: &str, x: f32, y: f32, z: f32, scale: f32) -> Vec<Triangle> {
+        let face = self.face();
+        let mut cursor_x = x;
+        let mut triangles = Vec::new();
+
+        for ch in text.chars() {
+            if ch == ' ' {
+                if let Some(advance) = fontmesh::glyph_advance(&face, ch) {
+                    cursor_x += advance * scale;
+                } else {
+                    cursor_x += 0.3 * scale;
+                }
+                continue;
+            }
+
+            if let Some(glyph_triangles) = self.render_glyph(&face, ch, cursor_x, y, z, scale) {
+                triangles.extend(glyph_triangles);
+            }
+
+            if let Some(advance) = fontmesh::glyph_advance(&face, ch) {
+                cursor_x += advance * scale;
+            }
+        }
+
+        triangles
     }
 
     pub fn render_text_centered(
@@ -248,6 +290,16 @@ fn contour_to_ring(
     Some(points)
 }
 
+fn signed_area(points: &[(f32, f32)]) -> f32 {
+    let mut area = 0.0;
+    for i in 0..points.len() {
+        let (x1, y1) = points[i];
+        let (x2, y2) = points[(i + 1) % points.len()];
+        area += x1 * y2 - x2 * y1;
+    }
+    area * 0.5
+}
+
 fn ring_to_polygon(points: &[(f32, f32)]) -> Option<Polygon<f64>> {
     if points.len() < 3 {
         return None;
@@ -315,35 +367,6 @@ fn polygon_fully_contains(container: &Polygon<f64>, candidate: &Polygon<f64>) ->
     residual.0.is_empty()
 }
 
-fn line_string_to_ring(ring: &LineString<f64>, expect_clockwise: bool) -> Vec<(f32, f32)> {
-    let mut points: Vec<(f32, f32)> = ring
-        .coords_iter()
-        .map(|coord| (coord.x as f32, coord.y as f32))
-        .collect();
-
-    if points.len() < 3 {
-        return Vec::new();
-    }
-
-    if points_are_close(*points.first().unwrap(), *points.last().unwrap()) {
-        points.pop();
-    }
-
-    points = clean_ring(points);
-    if points.len() < 3 {
-        return Vec::new();
-    }
-
-    orient_ring(points, expect_clockwise)
-}
-
-fn orient_ring(mut points: Vec<(f32, f32)>, expect_clockwise: bool) -> Vec<(f32, f32)> {
-    if is_clockwise(&points) != expect_clockwise {
-        points.reverse();
-    }
-    points
-}
-
 fn union_polygon_layer(polygons: Vec<Polygon<f64>>) -> Option<MultiPolygon<f64>> {
     if polygons.is_empty() {
         return None;
@@ -381,6 +404,10 @@ fn difference_multi_polygon(
     base
 }
 
+fn points_are_close(a: (f32, f32), b: (f32, f32)) -> bool {
+    (a.0 - b.0).abs() < CONTOUR_POINT_EPSILON && (a.1 - b.1).abs() < CONTOUR_POINT_EPSILON
+}
+
 fn clean_ring(points: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
     let mut cleaned = Vec::with_capacity(points.len());
     for point in points {
@@ -398,24 +425,6 @@ fn clean_ring(points: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
     }
 
     cleaned
-}
-
-fn is_clockwise(points: &[(f32, f32)]) -> bool {
-    signed_area(points) < 0.0
-}
-
-fn signed_area(points: &[(f32, f32)]) -> f32 {
-    let mut area = 0.0;
-    for i in 0..points.len() {
-        let (x1, y1) = points[i];
-        let (x2, y2) = points[(i + 1) % points.len()];
-        area += x1 * y2 - x2 * y1;
-    }
-    area * 0.5
-}
-
-fn points_are_close(a: (f32, f32), b: (f32, f32)) -> bool {
-    (a.0 - b.0).abs() < CONTOUR_POINT_EPSILON && (a.1 - b.1).abs() < CONTOUR_POINT_EPSILON
 }
 
 pub struct StrokeTextRenderer {
@@ -453,33 +462,76 @@ impl StrokeTextRenderer {
         (char_count as f32 * self.char_width) + ((char_count - 1) as f32 * self.char_spacing)
     }
 
-    pub fn render_text(&self, text: &str, x: f32, y: f32, z: f32) -> Vec<Triangle> {
-        let mut triangles = Vec::new();
+    pub fn render_text_polygons(&self, text: &str, x: f32, y: f32) -> MultiPolygon<f64> {
+        let mut all_polygons = MultiPolygon::new(vec![]);
         let mut cursor_x = x;
+        let buffer_config = crate::geometry::BufferConfig {
+            join_style: BufferJoinStyle::Round,
+            cap_style: BufferCapStyle::Round,
+            miter_limit: 2.0,
+            precision_factor: CLIPPER_PRECISION_FACTOR,
+        };
 
         for ch in text.chars() {
             let strokes = get_char_strokes(ch);
             for stroke in strokes {
-                let points: Vec<(f32, f32)> = stroke
+                let points: Vec<(f64, f64)> = stroke
                     .iter()
                     .map(|&(sx, sy)| {
                         (
-                            cursor_x + sx * (self.char_width / 5.0),
-                            y + sy * (self.char_height / 7.0),
+                            (cursor_x + sx * (self.char_width / 5.0)) as f64,
+                            (y + sy * (self.char_height / 7.0)) as f64,
                         )
                     })
                     .collect();
 
                 if points.len() >= 2 {
-                    let ribbon = extrude_ribbon_ex(
-                        &points,
-                        self.stroke_width,
-                        self.extrude_height,
-                        z,
-                        true,
-                        true,
-                    );
-                    triangles.extend(ribbon);
+                    let buffered =
+                        crate::geometry::buffer_polyline(&points, self.stroke_width as f64, &buffer_config);
+                    for poly in buffered.0 {
+                        all_polygons = all_polygons.union(&poly, CLIPPER_PRECISION_FACTOR);
+                    }
+                }
+            }
+            cursor_x += self.char_width + self.char_spacing;
+        }
+
+        all_polygons
+    }
+
+    pub fn render_text(&self, text: &str, x: f32, y: f32, z: f32) -> Vec<Triangle> {
+        let mut triangles = Vec::new();
+        let mut cursor_x = x;
+        let z_top = z + self.extrude_height;
+        let buffer_config = crate::geometry::BufferConfig {
+            join_style: BufferJoinStyle::Round,
+            cap_style: BufferCapStyle::Round,
+            miter_limit: 2.0,
+            precision_factor: CLIPPER_PRECISION_FACTOR,
+        };
+
+        for ch in text.chars() {
+            let strokes = get_char_strokes(ch);
+            for stroke in strokes {
+                let points: Vec<(f64, f64)> = stroke
+                    .iter()
+                    .map(|&(sx, sy)| {
+                        (
+                            (cursor_x + sx * (self.char_width / 5.0)) as f64,
+                            (y + sy * (self.char_height / 7.0)) as f64,
+                        )
+                    })
+                    .collect();
+
+                if points.len() >= 2 {
+                    let buffered =
+                        crate::geometry::buffer_polyline(&points, self.stroke_width as f64, &buffer_config);
+                    for polygon in buffered.0 {
+                        let outer = line_string_to_ring(polygon.exterior(), false);
+                        if outer.len() >= 3 {
+                            triangles.extend(extrude_polygon_ex(&outer, &[], z, z_top, true));
+                        }
+                    }
                 }
             }
             cursor_x += self.char_width + self.char_spacing;
@@ -543,6 +595,28 @@ impl TextRenderer {
         }
     }
 
+    pub fn render_text_polygons_centered(
+        &self,
+        text: &str,
+        center_x: f32,
+        y: f32,
+        scale: f32,
+    ) -> MultiPolygon<f64> {
+        match self {
+            Self::Ttf(ttf) => {
+                let width = ttf.text_width(text, scale);
+                let start_x = center_x - width / 2.0;
+                ttf.render_text_polygons(text, start_x, y, scale)
+            }
+            Self::Stroke(stroke) => {
+                let scaled = stroke.clone().with_scale(scale);
+                let width = scaled.text_width(text);
+                let start_x = center_x - width / 2.0;
+                scaled.render_text_polygons(text, start_x, y)
+            }
+        }
+    }
+
     pub fn calculate_scale_for_width(&self, text: &str, target_width: f32) -> f32 {
         match self {
             Self::Ttf(ttf) => ttf.calculate_scale_for_width(text, target_width),
@@ -554,6 +628,260 @@ impl TextRenderer {
     pub fn is_ttf(&self) -> bool {
         matches!(self, Self::Ttf(_))
     }
+}
+
+pub struct TextOutput {
+    pub triangles: Vec<Triangle>,
+    pub footprint: MultiPolygon<f64>,
+}
+
+fn build_text_output(
+    city: &str,
+    coords: (f64, f64),
+    size_mm: f32,
+    labels: (Option<&str>, Option<&str>),
+    font_path: Option<&std::path::Path>,
+    text_z_top: f32,
+    allow_fallback: bool,
+) -> TextOutput {
+    let (primary_text, secondary_text) = labels;
+    let text_z = 0.0;
+    let renderer = TextRenderer::new(font_path, text_z_top);
+
+    let mut triangles = render_text_triangles(
+        &renderer,
+        city,
+        coords,
+        size_mm,
+        primary_text,
+        secondary_text,
+        text_z,
+    );
+    let mut footprint = render_text_polygons(
+        &renderer,
+        city,
+        coords,
+        size_mm,
+        primary_text,
+        secondary_text,
+    );
+
+    let (boundary_edges, non_manifold_edges) = edge_topology_counts(&triangles);
+    if allow_fallback && (boundary_edges > 0 || non_manifold_edges > 0) {
+        let fallback_renderer = TextRenderer::Stroke(StrokeTextRenderer::new(text_z_top));
+        let fallback_triangles = render_text_triangles(
+            &fallback_renderer,
+            city,
+            coords,
+            size_mm,
+            primary_text,
+            secondary_text,
+            text_z,
+        );
+        let fallback_metrics = edge_topology_counts(&fallback_triangles);
+
+        if fallback_metrics.0 + fallback_metrics.1 <= boundary_edges + non_manifold_edges {
+            let fallback_footprint = render_text_polygons(
+                &fallback_renderer,
+                city,
+                coords,
+                size_mm,
+                primary_text,
+                secondary_text,
+            );
+            eprintln!(
+                "Warning: text mesh from TTF had topology issues ({} boundary, {} non-manifold edges); using stroke fallback",
+                boundary_edges, non_manifold_edges
+            );
+            triangles = fallback_triangles;
+            footprint = fallback_footprint;
+        }
+    }
+
+    TextOutput { triangles, footprint }
+}
+
+pub fn generate_text_output(
+    city: &str,
+    coords: (f64, f64),
+    size_mm: f32,
+    labels: (Option<&str>, Option<&str>),
+    font_path: Option<&std::path::Path>,
+    text_z_top: f32,
+    allow_fallback: bool,
+) -> TextOutput {
+    build_text_output(
+        city,
+        coords,
+        size_mm,
+        labels,
+        font_path,
+        text_z_top,
+        allow_fallback,
+    )
+}
+
+#[allow(dead_code)]
+pub fn generate_text_layer(
+    city: &str,
+    coords: (f64, f64),
+    size_mm: f32,
+    labels: (Option<&str>, Option<&str>),
+    font_path: Option<&std::path::Path>,
+    text_z_top: f32,
+    allow_fallback: bool,
+) -> Vec<Triangle> {
+    build_text_output(
+        city,
+        coords,
+        size_mm,
+        labels,
+        font_path,
+        text_z_top,
+        allow_fallback,
+    )
+    .triangles
+}
+
+#[allow(dead_code)]
+pub fn get_text_footprint(
+    city: &str,
+    coords: (f64, f64),
+    size_mm: f32,
+    labels: (Option<&str>, Option<&str>),
+    font_path: Option<&std::path::Path>,
+    text_z_top: f32,
+    allow_fallback: bool,
+) -> MultiPolygon<f64> {
+    build_text_output(
+        city,
+        coords,
+        size_mm,
+        labels,
+        font_path,
+        text_z_top,
+        allow_fallback,
+    )
+    .footprint
+}
+
+fn render_text_triangles(
+    renderer: &TextRenderer,
+    city: &str,
+    coords: (f64, f64),
+    size_mm: f32,
+    primary_text: Option<&str>,
+    secondary_text: Option<&str>,
+    text_z: f32,
+) -> Vec<Triangle> {
+    let mut triangles = Vec::new();
+    let primary = primary_text
+        .map(|s| s.to_uppercase())
+        .unwrap_or_else(|| city.to_uppercase());
+
+    let target_primary_width = size_mm * 0.75;
+    let primary_scale = renderer.calculate_scale_for_width(&primary, target_primary_width);
+    let primary_y = 12.0 * (size_mm / 220.0);
+    triangles.extend(renderer.render_text_centered(
+        &primary,
+        size_mm / 2.0,
+        primary_y,
+        text_z,
+        primary_scale,
+    ));
+
+    let secondary = secondary_text.map(|s| s.to_string()).unwrap_or_else(|| {
+        let (lat, lon) = coords;
+        let lat_dir = if lat >= 0.0 { "N" } else { "S" };
+        let lon_dir = if lon >= 0.0 { "E" } else { "W" };
+        format!("{:.4}{} / {:.4}{}", lat.abs(), lat_dir, lon.abs(), lon_dir)
+    });
+
+    let target_secondary_width = size_mm * 0.40;
+    let secondary_scale = renderer.calculate_scale_for_width(&secondary, target_secondary_width);
+    let secondary_y = 4.0 * (size_mm / 220.0);
+    triangles.extend(renderer.render_text_centered(
+        &secondary,
+        size_mm / 2.0,
+        secondary_y,
+        text_z,
+        secondary_scale,
+    ));
+
+    triangles
+}
+
+pub fn render_text_polygons(
+    renderer: &TextRenderer,
+    city: &str,
+    coords: (f64, f64),
+    size_mm: f32,
+    primary_text: Option<&str>,
+    secondary_text: Option<&str>,
+) -> MultiPolygon<f64> {
+    let mut combined = MultiPolygon::new(vec![]);
+
+    let primary = primary_text
+        .map(|s| s.to_uppercase())
+        .unwrap_or_else(|| city.to_uppercase());
+    let target_primary_width = size_mm * 0.75;
+    let primary_scale = renderer.calculate_scale_for_width(&primary, target_primary_width);
+    let primary_y = 12.0 * (size_mm / 220.0);
+    let primary_poly =
+        renderer.render_text_polygons_centered(&primary, size_mm / 2.0, primary_y, primary_scale);
+    for poly in primary_poly.0 {
+        combined = combined.union(&poly, CLIPPER_PRECISION_FACTOR);
+    }
+
+    let secondary = secondary_text.map(|s| s.to_string()).unwrap_or_else(|| {
+        let (lat, lon) = coords;
+        let lat_dir = if lat >= 0.0 { "N" } else { "S" };
+        let lon_dir = if lon >= 0.0 { "E" } else { "W" };
+        format!("{:.4}{} / {:.4}{}", lat.abs(), lat_dir, lon.abs(), lon_dir)
+    });
+    let target_secondary_width = size_mm * 0.40;
+    let secondary_scale = renderer.calculate_scale_for_width(&secondary, target_secondary_width);
+    let secondary_y = 4.0 * (size_mm / 220.0);
+    let secondary_poly = renderer.render_text_polygons_centered(
+        &secondary,
+        size_mm / 2.0,
+        secondary_y,
+        secondary_scale,
+    );
+    for poly in secondary_poly.0 {
+        combined = combined.union(&poly, CLIPPER_PRECISION_FACTOR);
+    }
+
+    combined
+}
+
+fn edge_topology_counts(triangles: &[Triangle]) -> (usize, usize) {
+    use std::collections::HashMap;
+    let mut counts: HashMap<((i64, i64, i64), (i64, i64, i64)), usize> = HashMap::new();
+
+    for triangle in triangles {
+        let v0 = quantize_vertex(triangle.vertices[0]);
+        let v1 = quantize_vertex(triangle.vertices[1]);
+        let v2 = quantize_vertex(triangle.vertices[2]);
+
+        for (a, b) in [(v0, v1), (v1, v2), (v2, v0)] {
+            let edge = if a <= b { (a, b) } else { (b, a) };
+            *counts.entry(edge).or_insert(0) += 1;
+        }
+    }
+
+    let boundary_edges = counts.values().filter(|&&count| count == 1).count();
+    let non_manifold_edges = counts.values().filter(|&&count| count > 2).count();
+    (boundary_edges, non_manifold_edges)
+}
+
+fn quantize_vertex(vertex: [f32; 3]) -> (i64, i64, i64) {
+    const SCALE: f32 = 10_000.0;
+    (
+        (vertex[0] * SCALE).round() as i64,
+        (vertex[1] * SCALE).round() as i64,
+        (vertex[2] * SCALE).round() as i64,
+    )
 }
 
 impl Clone for StrokeTextRenderer {

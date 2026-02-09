@@ -1,9 +1,7 @@
-use geo::{CoordsIter, LineString};
-
 use crate::domain::{RoadClass, RoadSegment};
 use crate::geometry::simplify::simplify_polyline;
-use crate::geometry::{BufferConfig, Projector, Scaler, buffer_polyline, union_polygons_batched};
-use crate::mesh::{Triangle, extrude_polygon_ex};
+use crate::geometry::{BufferConfig, Projector, Scaler, buffer_polyline, line_string_to_ring, union_polygons_batched};
+use crate::mesh::{extrude_polygon_ex, Triangle};
 
 #[derive(Debug, Clone)]
 pub struct RoadConfig {
@@ -107,7 +105,7 @@ impl RoadConfig {
 }
 
 const ROAD_UNION_BATCH_SIZE: usize = 500;
-const POINT_EPSILON: f32 = 1e-4;
+const POINT_EPSILON: f32 = crate::geometry::RING_POINT_EPSILON;
 
 /// Generate mesh triangles for all road segments
 ///
@@ -126,9 +124,16 @@ pub fn generate_road_meshes(
     config: &RoadConfig,
 ) -> Vec<Triangle> {
     let road_polygons = build_road_polygons(roads, projector, scaler, config);
+    generate_road_meshes_from_polygons(&road_polygons, config.z_top)
+}
+
+pub fn generate_road_meshes_from_polygons(
+    road_polygons: &geo::MultiPolygon<f64>,
+    z_top: f32,
+) -> Vec<Triangle> {
     let mut all_triangles = Vec::new();
 
-    for polygon in road_polygons.0 {
+    for polygon in &road_polygons.0 {
         let outer = line_string_to_ring(polygon.exterior(), false);
         if outer.len() < 3 {
             continue;
@@ -141,14 +146,14 @@ pub fn generate_road_meshes(
             .filter(|ring| ring.len() >= 3)
             .collect();
 
-        let triangles = extrude_polygon_ex(&outer, &holes, 0.0, config.z_top, true);
+        let triangles = extrude_polygon_ex(&outer, &holes, 0.0, z_top, true);
         all_triangles.extend(triangles);
     }
 
     all_triangles
 }
 
-fn build_road_polygons(
+pub fn build_road_polygons(
     roads: &[RoadSegment],
     projector: &Projector,
     scaler: &Scaler,
@@ -210,68 +215,6 @@ fn clean_polyline(points: &[(f32, f32)]) -> Vec<(f64, f64)> {
     }
 
     cleaned
-}
-
-fn line_string_to_ring(ring: &LineString<f64>, expect_clockwise: bool) -> Vec<(f32, f32)> {
-    let mut points: Vec<(f32, f32)> = ring
-        .coords_iter()
-        .map(|coord| (coord.x as f32, coord.y as f32))
-        .collect();
-
-    if points.len() < 3 {
-        return Vec::new();
-    }
-
-    if points_are_close(*points.first().unwrap(), *points.last().unwrap()) {
-        points.pop();
-    }
-
-    points = clean_ring(points);
-    if points.len() < 3 {
-        return Vec::new();
-    }
-
-    if is_clockwise(&points) != expect_clockwise {
-        points.reverse();
-    }
-
-    points
-}
-
-fn clean_ring(points: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
-    let mut cleaned = Vec::with_capacity(points.len());
-    for point in points {
-        let is_duplicate = cleaned
-            .last()
-            .is_some_and(|&previous| points_are_close(previous, point));
-        if !is_duplicate {
-            cleaned.push(point);
-        }
-    }
-
-    if cleaned.len() > 2 && points_are_close(*cleaned.first().unwrap(), *cleaned.last().unwrap()) {
-        cleaned.pop();
-    }
-
-    cleaned
-}
-
-fn is_clockwise(points: &[(f32, f32)]) -> bool {
-    signed_area(points) < 0.0
-}
-
-fn signed_area(points: &[(f32, f32)]) -> f32 {
-    let mut area = 0.0;
-    for i in 0..points.len() {
-        let (x1, y1) = points[i];
-        let (x2, y2) = points[(i + 1) % points.len()];
-        area += x1 * y2 - x2 * y1;
-    }
-    area * 0.5
-}
-
-fn points_are_close(a: (f32, f32), b: (f32, f32)) -> bool {
-    (a.0 - b.0).abs() < POINT_EPSILON && (a.1 - b.1).abs() < POINT_EPSILON
 }
 
 #[cfg(test)]
@@ -411,6 +354,10 @@ mod tests {
     }
 
     fn ordered_edge(a: QuantizedVertex, b: QuantizedVertex) -> QuantizedEdge {
-        if a <= b { (a, b) } else { (b, a) }
+        if a <= b {
+            (a, b)
+        } else {
+            (b, a)
+        }
     }
 }

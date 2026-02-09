@@ -5,7 +5,7 @@ pub mod text;
 pub mod water;
 
 pub use base::generate_base_plate;
-pub use parks::generate_park_meshes;
-pub use roads::{RoadConfig, generate_road_meshes};
-pub use text::TextRenderer;
-pub use water::generate_water_meshes;
+pub use parks::{build_park_polygons, generate_park_meshes_from_polygons};
+pub use roads::{RoadConfig, build_road_polygons, generate_road_meshes_from_polygons};
+pub use text::generate_text_output;
+pub use water::{build_water_polygons, generate_water_meshes_from_polygons};

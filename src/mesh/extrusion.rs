@@ -1,5 +1,5 @@
-use super::Triangle;
 use super::triangulation::triangulate_polygon;
+use super::Triangle;
 
 pub fn extrude_polygon(
     outer: &[(f32, f32)],

@@ -2,8 +2,7 @@ use geo::{LineString, Polygon};
 use geo_clipper::Clipper;
 
 use super::scaling::{Bounds, Scaler};
-
-const CLIPPER_PRECISION_FACTOR: f64 = 1000.0;
+use crate::geometry::CLIPPER_PRECISION_FACTOR;
 
 #[derive(Debug, Clone, Copy)]
 pub struct ClipRect {

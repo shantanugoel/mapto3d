@@ -90,7 +90,7 @@ impl Default for BufferConfig {
             join_style: BufferJoinStyle::Round,
             cap_style: BufferCapStyle::Round,
             miter_limit: 2.0,
-            precision_factor: 1000.0,
+            precision_factor: crate::geometry::CLIPPER_PRECISION_FACTOR,
         }
     }
 }
@@ -102,7 +102,7 @@ impl BufferConfig {
             join_style: join_style_from_env(),
             cap_style: cap_style_from_env(),
             miter_limit: 2.0,
-            precision_factor: 1000.0,
+            precision_factor: crate::geometry::CLIPPER_PRECISION_FACTOR,
         }
     }
 
