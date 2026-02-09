@@ -285,7 +285,7 @@ fn main() -> Result<()> {
     }
 
     let bounds = Bounds::from_points(&all_projected_points).context("Failed to compute bounds from road points")?;
-    let scaler = Scaler::from_bounds_with_edge_margin(&bounds, size as f64, edge_margin_mm as f64);
+    let scaler = Scaler::from_bounds_fill_width(&bounds, size as f64, edge_margin_mm as f64);
     let clip_rect = ClipRect::from_bounds(&bounds, &scaler);
     
     let spinner = create_spinner("Generating mesh layers...");

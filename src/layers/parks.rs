@@ -76,7 +76,7 @@ mod tests {
     fn test_generate_parks_empty() {
         let projector = Projector::new((0.0, 0.0));
         let bounds = Bounds::from_points(&[(0.0, 0.0), (1000.0, 1000.0)]).unwrap();
-        let scaler = Scaler::from_bounds_with_margin(&bounds, 220.0, 0.0);
+        let scaler = Scaler::from_bounds_fill_width(&bounds, 220.0, 0.0);
 
         let clip_rect = ClipRect::from_bounds(&bounds, &scaler);
         let triangles = generate_park_meshes(&[], &projector, &scaler, &clip_rect, 3.2);

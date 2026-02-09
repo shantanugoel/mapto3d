@@ -59,53 +59,17 @@ impl Scaler {
         self.scale
     }
 
-    /// Create a scaler with a uniform margin around the map features.
-    pub fn from_bounds_with_edge_margin(
-        bounds: &Bounds,
-        target_mm: f64,
-        edge_margin_mm: f64,
-    ) -> Self {
+    /// Create a scaler that fills the horizontal span of the base plate.
+    ///
+    /// This keeps the map edge-to-edge left/right, with an optional uniform edge margin.
+    pub fn from_bounds_fill_width(bounds: &Bounds, target_mm: f64, edge_margin_mm: f64) -> Self {
         let width = bounds.width();
-        let height = bounds.height();
 
-        let usable = (target_mm - edge_margin_mm * 2.0).max(0.0);
-        let max_dim = width.max(height);
+        let usable_width = (target_mm - edge_margin_mm * 2.0).max(0.0);
+        let scale = if width > 0.0 { usable_width / width } else { 1.0 };
 
-        let scale = if max_dim > 0.0 { usable / max_dim } else { 1.0 };
-
-        let scaled_width = width * scale;
-        let scaled_height = height * scale;
-
-        let offset_x = edge_margin_mm + (usable - scaled_width) / 2.0 - bounds.min_x * scale;
-        let offset_y = edge_margin_mm + (usable - scaled_height) / 2.0 - bounds.min_y * scale;
-
-        Self {
-            scale,
-            offset_x,
-            offset_y,
-        }
-    }
-
-    /// Create a scaler with a bottom margin reserved for text labels
-    pub fn from_bounds_with_margin(bounds: &Bounds, target_mm: f64, bottom_margin_mm: f64) -> Self {
-        let width = bounds.width();
-        let height = bounds.height();
-
-        let usable_height = target_mm - bottom_margin_mm;
-        let max_dim = width.max(height);
-
-        let scale = if max_dim > 0.0 {
-            usable_height / max_dim
-        } else {
-            1.0
-        };
-
-        let scaled_width = width * scale;
-        let scaled_height = height * scale;
-
-        let offset_x = (target_mm - scaled_width) / 2.0 - bounds.min_x * scale;
-        let offset_y =
-            bottom_margin_mm + (usable_height - scaled_height) / 2.0 - bounds.min_y * scale;
+        let offset_x = edge_margin_mm - bounds.min_x * scale;
+        let offset_y = edge_margin_mm - bounds.min_y * scale;
 
         Self {
             scale,
@@ -149,13 +113,15 @@ mod tests {
             max_y: 10000.0,
         };
 
-        let scaler = Scaler::from_bounds_with_margin(&bounds, 220.0, 0.0);
+        let scaler = Scaler::from_bounds_fill_width(&bounds, 220.0, 0.0);
 
-        // 10km should scale to 220mm
+        // 10km width should scale to 220mm
         // scale = 220 / 10000 = 0.022 mm/m
         assert!((scaler.scale_factor() - 0.022).abs() < 0.001);
 
-        // Center point should be at 110mm
+        // Left edge should map to 0, center maps to 110mm in X
+        let (x, _) = scaler.scale(0.0, 5000.0);
+        assert!(x.abs() < 1.0);
         let (x, y) = scaler.scale(5000.0, 5000.0);
         assert!((x - 110.0).abs() < 1.0);
         assert!((y - 110.0).abs() < 1.0);

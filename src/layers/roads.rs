@@ -283,7 +283,7 @@ mod tests {
             })
             .collect();
         let bounds = Bounds::from_points(&projected_points).unwrap();
-        let scaler = Scaler::from_bounds_with_margin(&bounds, 220.0, 0.0);
+        let scaler = Scaler::from_bounds_fill_width(&bounds, 220.0, 0.0);
 
         let polygons = build_road_polygons(&roads, &projector, &scaler, &RoadConfig::default());
         assert!(!polygons.0.is_empty());
@@ -315,7 +315,7 @@ mod tests {
             })
             .collect();
         let bounds = Bounds::from_points(&projected_points).unwrap();
-        let scaler = Scaler::from_bounds_with_margin(&bounds, 220.0, 0.0);
+        let scaler = Scaler::from_bounds_fill_width(&bounds, 220.0, 0.0);
 
         let triangles = generate_road_meshes(&roads, &projector, &scaler, &RoadConfig::default());
         let (boundary_edges, non_manifold_edges) = edge_counts(&triangles);
