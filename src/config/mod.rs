@@ -81,6 +81,9 @@ fn default_road_depth() -> RoadDepth {
 fn default_simplify() -> u8 {
     0
 }
+fn default_edge_margin_mm() -> f32 {
+    0.0
+}
 fn default_verbose() -> bool {
     false
 }
@@ -121,6 +124,8 @@ pub struct FileConfig {
     pub verbose: bool,
     #[serde(default = "default_simplify")]
     pub simplify: u8,
+    #[serde(default = "default_edge_margin_mm")]
+    pub edge_margin_mm: f32,
     #[serde(default = "default_cache_enabled")]
     pub cache_enabled: bool,
     #[serde(default = "default_cache_ttl_hours")]

@@ -107,6 +107,10 @@ struct Args {
     #[arg(long, default_value = "0", value_parser = clap::value_parser!(u8).range(0..=3))]
     simplify: u8,
 
+    /// Edge margin for map features (roads/water/parks) in mm
+    #[arg(long, default_value = "0.0")]
+    edge_margin_mm: f32,
+
     /// Path to TTF font file for text rendering (defaults to fonts/RobotoSerif.ttf)
     #[arg(long)]
     font: Option<PathBuf>,
@@ -150,6 +154,11 @@ fn main() -> Result<()> {
     let road_scale = if (args.road_scale - 1.0).abs() > 0.01 { args.road_scale } else { file_config.as_ref().map(|c| c.road_scale).unwrap_or(1.0) };
     let road_depth = if args.road_depth != RoadDepth::Primary { args.road_depth } else { file_config.as_ref().map(|c| c.road_depth).unwrap_or(RoadDepth::Primary) };
     let simplify = if args.simplify != 0 { args.simplify } else { file_config.as_ref().map(|c| c.simplify).unwrap_or(0) };
+    let edge_margin_mm = if (args.edge_margin_mm - 0.0).abs() > 0.01 {
+        args.edge_margin_mm
+    } else {
+        file_config.as_ref().map(|c| c.edge_margin_mm).unwrap_or(0.0)
+    };
     let verbose = args.verbose || file_config.as_ref().map(|c| c.verbose).unwrap_or(false);
     let cache_enabled = if args.no_cache { false } else { file_config.as_ref().map(|c| c.cache_enabled).unwrap_or(true) };
     let cache_ttl_hours = if args.cache_ttl_hours != 24 { args.cache_ttl_hours } else { file_config.as_ref().map(|c| c.cache_ttl_hours).unwrap_or(24) };
@@ -198,6 +207,7 @@ fn main() -> Result<()> {
         println!("  Road scale: {}", road_scale);
         println!("  Road depth: {:?}", road_depth);
         println!("  Simplify level: {}", simplify);
+        println!("  Edge margin: {}mm", edge_margin_mm);
         println!("  Water features: {}", if args.water { "enabled" } else { "disabled" });
         println!("  Park features: {}", if args.parks { "enabled" } else { "disabled" });
         println!("  Output: {}", output_path.display());
@@ -275,8 +285,7 @@ fn main() -> Result<()> {
     }
 
     let bounds = Bounds::from_points(&all_projected_points).context("Failed to compute bounds from road points")?;
-    let text_margin_mm = 20.0;
-    let scaler = Scaler::from_bounds_with_margin(&bounds, size as f64, text_margin_mm);
+    let scaler = Scaler::from_bounds_with_edge_margin(&bounds, size as f64, edge_margin_mm as f64);
     let clip_rect = ClipRect::from_bounds(&bounds, &scaler);
     
     let spinner = create_spinner("Generating mesh layers...");

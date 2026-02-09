@@ -52,6 +52,7 @@ Geometry:
       --road-scale <SCALE>       Road width multiplier (default: 1.0)
       --road-depth <DEPTH>       motorway|primary|secondary|tertiary|all
       --simplify <LEVEL>         0..3 (default: 0)
+      --edge-margin-mm <MM>      Edge margin for map features in mm (default: 0.0)
 
 Layers:
       --water                    Enable water features
@@ -107,6 +108,7 @@ base_height = 2.0
 road_scale = 1.2
 road_depth = "secondary"
 simplify = 1
+edge_margin_mm = 0.0
 verbose = true
 cache_enabled = true
 cache_ttl_hours = 24

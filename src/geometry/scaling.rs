@@ -59,6 +59,33 @@ impl Scaler {
         self.scale
     }
 
+    /// Create a scaler with a uniform margin around the map features.
+    pub fn from_bounds_with_edge_margin(
+        bounds: &Bounds,
+        target_mm: f64,
+        edge_margin_mm: f64,
+    ) -> Self {
+        let width = bounds.width();
+        let height = bounds.height();
+
+        let usable = (target_mm - edge_margin_mm * 2.0).max(0.0);
+        let max_dim = width.max(height);
+
+        let scale = if max_dim > 0.0 { usable / max_dim } else { 1.0 };
+
+        let scaled_width = width * scale;
+        let scaled_height = height * scale;
+
+        let offset_x = edge_margin_mm + (usable - scaled_width) / 2.0 - bounds.min_x * scale;
+        let offset_y = edge_margin_mm + (usable - scaled_height) / 2.0 - bounds.min_y * scale;
+
+        Self {
+            scale,
+            offset_x,
+            offset_y,
+        }
+    }
+
     /// Create a scaler with a bottom margin reserved for text labels
     pub fn from_bounds_with_margin(bounds: &Bounds, target_mm: f64, bottom_margin_mm: f64) -> Self {
         let width = bounds.width();
